@@ -235,6 +235,25 @@ pub fn run(target: &Target) -> Result<(), Box<dyn Error>> {
         }
     }
 
+    if obj_code.len() > 0 {
+        if parser.program_start_address == 0x0 {
+            contents.push_str(&format!(
+                "T{:06X}{:02X}{:03X}{}\n",
+                start_address,
+                obj_code.len(),
+                relocation_bit,
+                obj_code
+            ));
+        } else { 
+            contents.push_str(&format!(
+                "T{:06X}{:03X}{}\n",
+                start_address,
+                obj_code.len(),
+                obj_code
+            ));
+        }
+    }
+
     contents.push_str(&format!("E{:06X}", parser.program_start_address));
     if !have_error {
         fs::write(&target.execute_file, contents)?;
