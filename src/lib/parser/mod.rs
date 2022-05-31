@@ -19,6 +19,7 @@ pub struct Parser {
     pub program_end: bool,
     pub program_name: String,
     pub program_length: Cell<u16>,
+    wait_for_base: Cell<bool>,
     reserve: HashMap<String, ()>,
     registers: HashMap<String, u8>,
     base: RefCell<String>,
@@ -137,6 +138,7 @@ impl Parser {
             program_length: Cell::new(0),
             base: RefCell::new(String::new()),
             verbose: verbose,
+            wait_for_base: Cell::new(false),
             reserve: HashMap::from([
                 ("WORD".to_string(), ()),
                 ("BYTE".to_string(), ()),
@@ -269,6 +271,11 @@ impl Parser {
                     "BASE" => {
                         move_address = 0;
                         self.symbol_legal(operand)?;
+                        if self.wait_for_base.get() {
+                            self.wait_for_base.set(false);
+                        } else {
+                            return Err("BASE must be after LDB".into());
+                        }
                         if self.symbol_table.is_legal(operand) {
                             self.base.replace(String::from(operand));
                             if self.verbose {
@@ -302,6 +309,13 @@ impl Parser {
                             format = 3;
                         }
                         let mnemonic = mnemonic.replace("+", "");
+                        if mnemonic == "LDB" {
+                            if self.wait_for_base.get() {
+                                return Err("You are already load to base without BASE mnemonic".into());
+                            } else {
+                                self.wait_for_base.set(true);
+                            }
+                        }
                         match self.opcode_table.get(&mnemonic) {
                             Some(instruction) => {
                                 (byte_code, opcode_format) = instruction;
