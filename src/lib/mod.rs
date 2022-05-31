@@ -28,7 +28,7 @@ impl Target {
             return Err(help_message(args[0].as_str()).into());
         }
         let mut verbose = false;
-        let mut execute_file = "a.out";
+        let mut execute_file = String::from("a.out");
 
         for i in 1..args.len() - 1 {
             if args[i] == "-v" {
@@ -37,7 +37,12 @@ impl Target {
                 if i + 1 >= args.len() - 1 {
                     return Err(help_message(args[0].as_str()).into());
                 }
-                execute_file = args[i + 1].as_str();
+                let re = Regex::new(r"^[a-zA-Z0-9_]+$").unwrap();
+                if !re.is_match(&args[i + 1]) {
+                    return Err(format!("invalid file name: {}", args[i + 1]).into());
+                }
+                execute_file = args[i + 1].clone();
+                execute_file.push_str(".out")
             }
         }
 

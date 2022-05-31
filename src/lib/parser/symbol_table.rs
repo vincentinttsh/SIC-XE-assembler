@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::error::Error;
 use std::cell::Cell;
 use std::cell::RefCell;
+use regex::Regex;
 
 
 pub struct SymbolTable {
@@ -19,21 +20,25 @@ impl SymbolTable {
        return SymbolTable { table: HashMap::new() }
     }
 
-    pub fn is_legal(&self, _symbol: &str) -> bool {
-        return true;
+    pub fn is_legal(&self, symbol: &str) -> bool {
+        let re = Regex::new(r"^[A-Z0-9]+$").unwrap();
+        return re.is_match(symbol);
     }
 
-    pub fn get(&mut self, symbol: &str, address: u16) -> (u16, bool) {
-       match self.table.get(symbol) {
+    pub fn get(&mut self, symbol: &str, address: u16) -> Result<(u16, bool), Box<dyn Error>> {
+        if !self.is_legal(symbol) {
+            return Err(format!("illegal operand: {}", symbol).into());
+        }
+        match self.table.get(symbol) {
             Some(data) => {
                 if data.need_alloc.get() {
                     data.wait_byte_code.borrow_mut().push(address);
                 }
-                return (data.address.get(), data.need_alloc.get());
+                return Ok((data.address.get(), data.need_alloc.get()));
             }
             None => {
                 self.insert_without_address(symbol, address);
-                return (0x0, true);
+                return Ok((0x0, true));
             }
        }
     }
@@ -49,7 +54,9 @@ impl SymbolTable {
     }
 
     pub fn insert(&mut self, symbol: &str, address: u16) -> Result<Vec<u16>, Box<dyn Error>> {
-
+        if !self.is_legal(symbol) {
+            return Err(format!("illegal label: {}", symbol).into());
+        }
         match self.table.get(symbol) {
             Some(symbol_data) => {
                 if symbol_data.need_alloc.get() {

@@ -79,7 +79,7 @@ impl Code {
         let pc: i16 = (self.address.get() + self.byte.get()) as i16;
         let operand_byte_code: u16;
 
-        (operand_byte_code, _) = parser.symbol(&self.operand.borrow());
+        (operand_byte_code, _) = parser.symbol(&self.operand.borrow())?;
         if self.xbpe() % 2 == 1 {
             self.obj_code
                 .set(self.obj_code.get() + operand_byte_code as u32);
@@ -160,7 +160,7 @@ impl Parser {
         })
     }
 
-    pub fn symbol(&mut self, symbol: &str) -> (u16, bool) {
+    pub fn symbol(&mut self, symbol: &str) -> Result<(u16, bool), Box<dyn Error>> {
         return self.symbol_table.get(symbol, 0x0);
     }
 
@@ -291,7 +291,7 @@ impl Parser {
                         self.program_end = true;
                         self.symbol_legal(operand)?;
                         let (operand_byte_code, need_alloc) =
-                            self.symbol_table.get(operand, address);
+                            self.symbol_table.get(operand, address)?;
                         if need_alloc {
                             return Err(format!("illegal operand：{}", operand).into());
                         } else {
@@ -704,7 +704,7 @@ impl Parser {
                         } else {
                             self.symbol_legal(operand[0])?;
                             (operand_byte_code, need_alloc) =
-                                self.symbol_table.get(operand[0], address);
+                                self.symbol_table.get(operand[0], address)?;
                         }
 
                         if format == 3 {
@@ -717,7 +717,7 @@ impl Parser {
                     } else {
                         self.symbol_legal(operand[0])?;
                         (operand_byte_code, need_alloc) =
-                            self.symbol_table.get(operand[0], address);
+                            self.symbol_table.get(operand[0], address)?;
                         if format == 4 {
                             xbpe += 1;
                         }
@@ -799,7 +799,7 @@ impl Parser {
             if base == "" {
                 return Err(format!("re-alloc: need base, but don't have").into());
             }
-            let (base_address, need_alloc) = self.symbol_table.get(base, address);
+            let (base_address, need_alloc) = self.symbol_table.get(base, address)?;
             let base_address = base_address as i32;
             if need_alloc {
                 return Ok((base_address, true, 0));
@@ -832,7 +832,7 @@ impl Parser {
             if self.base.borrow().to_string() == "" {
                 return Err(format!("need base, but don't have").into());
             }
-            let (base_address, need_alloc) = self.symbol_table.get(&self.base.borrow(), address);
+            let (base_address, need_alloc) = self.symbol_table.get(&self.base.borrow(), address)?;
             let base_address = base_address as i32;
             if need_alloc {
                 return Ok((base_address, true));
