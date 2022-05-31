@@ -30,18 +30,18 @@ impl Target {
         let mut verbose = false;
         let mut execute_file = "a.out";
 
-        for i in 1..args.len()-1 {
+        for i in 1..args.len() - 1 {
             if args[i] == "-v" {
                 verbose = true;
             } else if args[i] == "-o" {
-                if i+1 >= args.len()-1 {
+                if i + 1 >= args.len() - 1 {
                     return Err(help_message(args[0].as_str()).into());
                 }
-                execute_file = args[i+1].as_str();
+                execute_file = args[i + 1].as_str();
             }
         }
 
-        let code_file_path = args[args.len()-1].clone();
+        let code_file_path = args[args.len() - 1].clone();
 
         Ok(Target {
             code_file_path,
@@ -78,6 +78,13 @@ pub fn run(target: &Target) -> Result<(), Box<dyn Error>> {
 
         match parser.translate(address, line.clone().trim(), line_number, original_line) {
             Ok((code, move_address, need_modify_obj_code)) => {
+                if parser.program_end && !code.nocode.get() {
+                    if !target.verbose {
+                        print!("{}:\t{}\n-> ", line_number, original_line);
+                    }
+                    println!("{}", "Error: have code after END");
+                    break;
+                }
                 byte_code_list.push(code);
                 address_map.insert(address, byte_code_list.len() - 1);
 
@@ -137,14 +144,14 @@ pub fn run(target: &Target) -> Result<(), Box<dyn Error>> {
                     code.code,
                     code.address.get(),
                     code.obj_code.get(),
-                    width=width,
+                    width = width,
                 );
             }
         }
     }
 
     if have_error {
-        return Ok(())
+        return Ok(());
     }
 
     // print binary code
@@ -193,7 +200,7 @@ pub fn run(target: &Target) -> Result<(), Box<dyn Error>> {
                         relocation_bit,
                         obj_code
                     ));
-                } else { 
+                } else {
                     contents.push_str(&format!(
                         "T{:06X}{:03X}{}\n",
                         start_address,
@@ -244,7 +251,7 @@ pub fn run(target: &Target) -> Result<(), Box<dyn Error>> {
                 relocation_bit,
                 obj_code
             ));
-        } else { 
+        } else {
             contents.push_str(&format!(
                 "T{:06X}{:03X}{}\n",
                 start_address,
@@ -258,7 +265,7 @@ pub fn run(target: &Target) -> Result<(), Box<dyn Error>> {
     if !have_error {
         fs::write(&target.execute_file, contents)?;
     }
-    // END print binary code    
+    // END print binary code
 
     Ok(())
 }
