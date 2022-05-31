@@ -502,6 +502,11 @@ impl Parser {
                     } else {
                         format = 3;
                     }
+
+                    if mnemonic.matches('+').count() > 1 {
+                        return Err(format!("invalid mnemonic {}", mnemonic));
+                    }
+
                     let mnemonic = mnemonic.replace("+", "");
 
                     match self.opcode_table.get(&mnemonic) {
