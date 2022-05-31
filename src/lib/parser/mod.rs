@@ -392,11 +392,9 @@ impl Parser {
                             move_address = get;
                         }
                         Err(_) => {
-                            return Err(format!(
-                                "illegal：{} must be positive decimal",
-                                operand
-                            )
-                            .into());
+                            return Err(
+                                format!("illegal：{} must be positive decimal", operand).into()
+                            );
                         }
                     }
                     code.nocode.set(true);
@@ -409,11 +407,9 @@ impl Parser {
                             move_address = get;
                         }
                         Err(_) => {
-                            return Err(format!(
-                                "illegal：{} must be positive decimal",
-                                operand
-                            )
-                            .into());
+                            return Err(
+                                format!("illegal：{} must be positive decimal", operand).into()
+                            );
                         }
                     }
                     move_address = move_address * 3;
@@ -431,11 +427,7 @@ impl Parser {
                             num = get;
                         }
                         Err(_) => {
-                            return Err(format!(
-                                "illegal：{} must be decimal",
-                                operand
-                            )
-                            .into());
+                            return Err(format!("illegal：{} must be decimal", operand).into());
                         }
                     }
 
@@ -528,6 +520,12 @@ impl Parser {
                                 format,
                             ) {
                                 Ok((obj_code, byte, ni, need_alloc, base, operand)) => {
+                                    if operand == label {
+                                        return Err(format!(
+                                            "invalid operand and label cannot be the same"
+                                        )
+                                        .into());
+                                    }
                                     code.obj_code.set(obj_code);
                                     code.byte.set(byte as u16);
                                     code.base.replace(String::from(base));
