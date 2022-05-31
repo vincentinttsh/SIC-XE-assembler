@@ -614,18 +614,12 @@ impl Parser {
 
         match opcode_format {
             1 => {
-                if format != opcode_format {
-                    return Err(format!("invalid instruction").into());
-                }
                 obj_code = 0 << 8 + byte_code as u32;
                 byte = opcode_format;
                 finial_operand = String::new();
                 ni = 0;
             }
             2 => {
-                if format != 3 {
-                    return Err(format!("invalid instruction {}, {}", format, opcode_format).into());
-                }
                 let operand: Vec<&str> = self.comma_separator.split(&operand).into_iter().collect();
                 if operand.len() == 1 {
                     if let Some(r1) = self.registers.get(operand[0]) {
@@ -664,9 +658,6 @@ impl Parser {
                     finial_operand = String::new();
                     ni = 0;
                 } else {
-                    if format != 3 && format != 4 {
-                        return Err(format!("invalid instruction {}, {}", format, opcode_format).into());
-                    }
                     let original_operand = operand;
                     let operand: String;
                     let mut xbpe: u8 = 0x0;
