@@ -311,7 +311,9 @@ impl Parser {
                         let mnemonic = mnemonic.replace("+", "");
                         if mnemonic == "LDB" {
                             if self.wait_for_base.get() {
-                                return Err("You are already load to base without BASE mnemonic".into());
+                                return Err(
+                                    "You are already load to base without BASE mnemonic".into()
+                                );
                             } else {
                                 self.wait_for_base.set(true);
                             }
@@ -366,9 +368,11 @@ impl Parser {
                             move_address = address;
                         }
                         Err(_) => {
-                            return Err(
-                                format!("illegal Start address：{} must be Hex", operand).into()
-                            );
+                            return Err(format!(
+                                "illegal Start address：{} must be positive Hex",
+                                operand
+                            )
+                            .into());
                         }
                     }
                     self.program_start = true;
@@ -383,13 +387,35 @@ impl Parser {
                     code.byte.set(0);
                 }
                 "RESB" => {
-                    move_address = operand.parse()?;
+                    match u16::from_str_radix(operand, 10) {
+                        Ok(get) => {
+                            move_address = get;
+                        }
+                        Err(_) => {
+                            return Err(format!(
+                                "illegal：{} must be positive decimal",
+                                operand
+                            )
+                            .into());
+                        }
+                    }
                     code.nocode.set(true);
                     code.byte.set(move_address);
                     code.variable.set(true);
                 }
                 "RESW" => {
-                    move_address = operand.parse()?;
+                    match u16::from_str_radix(operand, 10) {
+                        Ok(get) => {
+                            move_address = get;
+                        }
+                        Err(_) => {
+                            return Err(format!(
+                                "illegal：{} must be positive decimal",
+                                operand
+                            )
+                            .into());
+                        }
+                    }
                     move_address = move_address * 3;
                     code.nocode.set(true);
                     code.byte.set(move_address * 3);
@@ -398,7 +424,20 @@ impl Parser {
                 "WORD" => {
                     move_address = 3;
                     let obj_code: u32;
-                    let num: i16 = operand.parse()?;
+                    let num: i16;
+
+                    match i16::from_str_radix(operand, 10) {
+                        Ok(get) => {
+                            num = get;
+                        }
+                        Err(_) => {
+                            return Err(format!(
+                                "illegal：{} must be decimal",
+                                operand
+                            )
+                            .into());
+                        }
+                    }
 
                     if num > 2047 || num < -2048 {
                         return Err(format!("operand {} out of range", operand).into());
@@ -417,13 +456,11 @@ impl Parser {
                 }
                 "BYTE" => {
                     let obj_code: u32;
-
+                    if operand.len() <= 3 {
+                        return Err(format!("illegal operand：{}", operand).into());
+                    }
                     if operand.bytes().nth(0).unwrap() == b'C' {
                         let mut tmp_obj_code = String::new();
-
-                        if operand.len() < 3 {
-                            return Err(format!("illegal operand：{}", operand).into());
-                        }
 
                         for i in 2..operand.len() - 1 {
                             let tmp = format!("{:02X}", operand.chars().nth(i).unwrap() as u8);
@@ -436,9 +473,6 @@ impl Parser {
                         let mut tmp_obj_code = String::new();
                         let len = (operand.len() - 3) as u32;
 
-                        if operand.len() < 3 {
-                            return Err(format!("illegal operand：{}", operand).into());
-                        }
                         if len % 2 != 0 {
                             return Err(
                                 format!("illegal operand：{} need whole byte", operand).into()
