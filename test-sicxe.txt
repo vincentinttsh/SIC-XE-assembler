@@ -5,7 +5,7 @@
 . empty line detection
 . . comand line user filenames input
 
-COPY START 2000		. program start here
+COPY START 0000		. program start here
 FIRST STL RETADR
 LDB #LENGTH
 BASE LENGTH

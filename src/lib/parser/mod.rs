@@ -155,7 +155,6 @@ impl Parser {
                 ("T".to_string(), 0x5),
                 ("F".to_string(), 0x6),
             ]),
-
         })
     }
 
@@ -204,10 +203,7 @@ impl Parser {
             let opcode_format: u8;
 
             if !self.program_start {
-                if !self.verbose {
-                    print!("{}:\t{}\n-> ", line_number, original_line);
-                }
-                return Err("code need to start with START mnemonic".into());
+                return Err("code need to start with a legal START mnemonic".into());
             }
 
             match self.opcode_table.get(mnemonic) {
@@ -215,9 +211,6 @@ impl Parser {
                     (byte_code, opcode_format) = instruction;
                 }
                 None => {
-                    if !self.verbose {
-                        print!("{}:\t{}\n-> ", line_number, original_line);
-                    }
                     return Err(format!("unknown instruction：{}", mnemonic).into());
                 }
             }
@@ -228,9 +221,6 @@ impl Parser {
                     code.byte.set(byte as u16);
                 }
                 Err(e) => {
-                    if !self.verbose {
-                        print!("{}:\t{}\n-> ", line_number, original_line);
-                    }
                     return Err(e);
                 }
             }
@@ -243,10 +233,7 @@ impl Parser {
             let opcode_format: u8;
 
             if !self.program_start {
-                if !self.verbose {
-                    print!("{}:\t{}\n-> ", line_number, original_line);
-                }
-                return Err("code need to start with START mnemonic".into());
+                return Err("code need to start with a legal START mnemonic".into());
             }
 
             // no operand
@@ -259,9 +246,6 @@ impl Parser {
                         code.byte.set(byte as u16);
                     }
                     Err(e) => {
-                        if !self.verbose {
-                            print!("{}:\t{}\n-> ", line_number, original_line);
-                        }
                         return Err(e);
                     }
                 }
@@ -273,9 +257,6 @@ impl Parser {
                         need_modify_obj_code = wait_byte_code;
                     }
                     Err(e) => {
-                        if !self.verbose {
-                            print!("{}:\t{}\n-> ", line_number, original_line);
-                        }
                         return Err(e);
                     }
                 }
@@ -294,9 +275,6 @@ impl Parser {
                                 print!("now base is {}", operand);
                             }
                         } else {
-                            if !self.verbose {
-                                print!("{}:\t{}\n-> ", line_number, original_line);
-                            }
                             return Err(format!("illegal operand：{}", operand).into());
                         }
                         code.nocode.set(true);
@@ -308,9 +286,6 @@ impl Parser {
                         let (operand_byte_code, need_alloc) =
                             self.symbol_table.get(operand, address);
                         if need_alloc {
-                            if !self.verbose {
-                                print!("{}:\t{}\n-> ", line_number, original_line);
-                            }
                             return Err(format!("illegal operand：{}", operand).into());
                         } else {
                             self.program_start_address = operand_byte_code;
@@ -349,17 +324,11 @@ impl Parser {
                                         }
                                     }
                                     Err(e) => {
-                                        if !self.verbose {
-                                            print!("{}:\t{}\n-> ", line_number, original_line);
-                                        }
                                         return Err(e);
                                     }
                                 }
                             }
                             None => {
-                                if !self.verbose {
-                                    print!("{}:\t{}\n-> ", line_number, original_line);
-                                }
                                 return Err(format!("unknown instruction：{}", mnemonic).into());
                             }
                         }
@@ -378,7 +347,16 @@ impl Parser {
 
             match mnemonic {
                 "START" => {
-                    move_address = u16::from_str_radix(operand, 16)?;
+                    match u16::from_str_radix(operand, 16) {
+                        Ok(address) => {
+                            move_address = address;
+                        }
+                        Err(_) => {
+                            return Err(
+                                format!("illegal Start address：{} must be Hex", operand).into()
+                            );
+                        }
+                    }
                     self.program_start = true;
                     self.program_name = label.to_string();
                     if self.verbose {
@@ -409,9 +387,6 @@ impl Parser {
                     let num: i16 = operand.parse()?;
 
                     if num > 2047 || num < -2048 {
-                        if !self.verbose {
-                            print!("{}:\t{}\n-> ", line_number, original_line);
-                        }
                         return Err(format!("operand {} out of range", operand).into());
                     }
                     let operand_str: String = format!("{:03X}", num);
@@ -433,9 +408,6 @@ impl Parser {
                         let mut tmp_obj_code = String::new();
 
                         if operand.len() < 3 {
-                            if !self.verbose {
-                                print!("{}:\t{}\n-> ", line_number, original_line);
-                            }
                             return Err(format!("illegal operand：{}", operand).into());
                         }
 
@@ -451,9 +423,6 @@ impl Parser {
                         let len = (operand.len() - 3) as u32;
 
                         if operand.len() < 3 {
-                            if !self.verbose {
-                                print!("{}:\t{}\n-> ", line_number, original_line);
-                            }
                             return Err(format!("illegal operand：{}", operand).into());
                         }
                         if len % 2 != 0 {
@@ -469,9 +438,6 @@ impl Parser {
                         obj_code = u32::from_str_radix(&tmp_obj_code, 16)?;
                         code.byte.set((len / 2) as u16);
                     } else {
-                        if !self.verbose {
-                            print!("{}:\t{}\n-> ", line_number, original_line);
-                        }
                         return Err(format!("unknown operand：{}", operand).into());
                     }
 
@@ -480,10 +446,7 @@ impl Parser {
                 }
                 _ => {
                     if !self.program_start {
-                        if !self.verbose {
-                            print!("{}:\t{}\n-> ", line_number, original_line);
-                        }
-                        return Err("code need to start with START mnemonic".into());
+                        return Err("code need to start with a legal START mnemonic".into());
                     }
 
                     if mnemonic.bytes().nth(0).unwrap() == b'+' {
@@ -521,9 +484,6 @@ impl Parser {
                             }
                         }
                         None => {
-                            if !self.verbose {
-                                print!("{}:\t{}\n-> ", line_number, original_line);
-                            }
                             return Err(format!("unknown instruction：{}", mnemonic).into());
                         }
                     }
@@ -537,9 +497,6 @@ impl Parser {
                     need_modify_obj_code = wait_byte_code;
                 }
                 Err(e) => {
-                    if !self.verbose {
-                        print!("{}:\t{}\n-> ", line_number, original_line);
-                    }
                     return Err(e);
                 }
             }
@@ -571,7 +528,7 @@ impl Parser {
         Ok((code, move_address, need_modify_obj_code))
     }
 
-    fn symbol_legal (&self, label: &str) -> Result<(), Box<dyn Error>> {
+    fn symbol_legal(&self, label: &str) -> Result<(), Box<dyn Error>> {
         if self.opcode_table.get(label) != None {
             return Err(format!("{} is a instruction", label).into());
         }
@@ -782,6 +739,9 @@ impl Parser {
         let operand_byte_code = (operand as i16) - pc;
 
         if operand_byte_code < -2048 || operand_byte_code > 2047 {
+            if base == "" {
+                return Err(format!("re-alloc: need base, but don't have").into());
+            }
             let (base_address, need_alloc) = self.symbol_table.get(base, address);
             let base_address = base_address as i32;
             if need_alloc {
@@ -812,6 +772,9 @@ impl Parser {
         let operand_byte_code = (operand as i16) - pc;
 
         if operand_byte_code < -2048 || operand_byte_code > 2047 {
+            if self.base.borrow().to_string() == "" {
+                return Err(format!("need base, but don't have").into());
+            }
             let (base_address, need_alloc) = self.symbol_table.get(&self.base.borrow(), address);
             let base_address = base_address as i32;
             if need_alloc {

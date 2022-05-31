@@ -2,9 +2,7 @@ use regex::Regex;
 use std::collections::HashMap;
 use std::error::Error;
 use std::fs;
-use std::fs::File;
 use std::io::{self, Write};
-use std::path::Path;
 
 mod parser;
 use parser::Code;
@@ -44,10 +42,6 @@ impl Target {
         }
 
         let code_file_path = args[args.len()-1].clone();
-        let execute_file_path = "a.out";
-        if !Path::new(execute_file_path).exists() {
-            File::create(execute_file_path)?;
-        }
 
         Ok(Target {
             code_file_path,
@@ -68,6 +62,7 @@ pub fn run(target: &Target) -> Result<(), Box<dyn Error>> {
     let mut address: u16 = 0x0;
     let mut byte_code_list: Vec<Code> = Vec::new();
     let mut address_map: HashMap<u16, usize> = HashMap::new();
+    let mut have_error = false;
 
     if target.verbose {
         println!("{}", "One pass:");
@@ -110,9 +105,13 @@ pub fn run(target: &Target) -> Result<(), Box<dyn Error>> {
                 address += move_address;
             }
             Err(e) => {
-                if e.to_string() == "code need to start with START mnemonic" {
+                if e.to_string() == "code need to start with a legal START mnemonic" {
                     io::stdout().flush().unwrap();
                     return Err(e.into());
+                }
+                have_error = true;
+                if !target.verbose {
+                    print!("{}:\t{}\n-> ", line_number, original_line);
                 }
                 println!("{}", e);
             }
@@ -144,8 +143,11 @@ pub fn run(target: &Target) -> Result<(), Box<dyn Error>> {
         }
     }
 
+    if have_error {
+        return Ok(())
+    }
+
     // print binary code
-    let mut have_error = false;
     let mut contents = format!(
         "H{:>6}{:06X}{:06X}\n",
         parser.program_name,
@@ -163,17 +165,18 @@ pub fn run(target: &Target) -> Result<(), Box<dyn Error>> {
         let width = (code.byte.get() * 2) as usize;
         if code.undone.get() {
             if code.base.borrow().to_string() != "" {
+                print!("{}:\t{}\n-> ", code.line_number, code.code);
                 println!(
-                    "Error: line {}: operand {} or {} not found",
-                    code.line_number,
+                    "operand {} or {} not found",
                     code.operand.borrow(),
                     code.base.borrow()
                 );
             } else {
+                print!("{}:\t{}\n-> ", code.line_number, code.code);
                 println!(
-                    "Error: line {}: operand {} not found",
-                    code.line_number,
-                    code.operand.borrow()
+                    "operand {} or {} not found",
+                    code.operand.borrow(),
+                    code.base.borrow()
                 );
             }
             have_error = true;
