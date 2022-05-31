@@ -466,6 +466,9 @@ impl Parser {
                             let tmp = format!("{:02X}", operand.chars().nth(i).unwrap() as u8);
                             tmp_obj_code.push_str(&tmp);
                         }
+                        if tmp_obj_code.len() > 8 {
+                            return Err("BYTE only support 32bits".into());
+                        }
 
                         obj_code = u32::from_str_radix(&tmp_obj_code, 16)?;
                         code.byte.set((operand.len() - 3) as u16);
@@ -481,6 +484,9 @@ impl Parser {
 
                         for i in 2..operand.len() - 1 {
                             tmp_obj_code.push(operand.chars().nth(i).unwrap());
+                        }
+                        if tmp_obj_code.len() > 8 {
+                            return Err("BYTE only support 32bits".into());
                         }
 
                         obj_code = u32::from_str_radix(&tmp_obj_code, 16)?;
