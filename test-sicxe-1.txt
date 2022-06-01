@@ -1,10 +1,11 @@
+. cspell:disable 
 . comment
   . indexed addressing
 .. free format coding
 . empty line detection
 . . comand line user filenames input
 
-COPY START 0		. program start here
+COPY START 0000		. program start here
 FIRST STL RETADR
 LDB #LENGTH
 BASE LENGTH
@@ -58,6 +59,8 @@ TIXR T
 JLT WLOOP
 RSUB
 OUTPUT BYTE X'05'
+TEMPB BYTE C'C'
+TEMPW WORD 2022
 END FIRST
 
 .. . end of this program

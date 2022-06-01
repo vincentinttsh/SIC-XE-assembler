@@ -58,7 +58,7 @@ impl Target {
 
 pub fn run(target: &Target) -> Result<(), Box<dyn Error>> {
     let user_code = fs::read_to_string(target.code_file_path.clone())?;
-    let re = Regex::new(r",[ \t]+")?;
+    let re = Regex::new(r"[ \t]*,[ \t]*")?;
     let c_re = Regex::new(r"[ \t]+C[ \t]+")?;
     let x_re = Regex::new(r"[ \t]+X[ \t]+")?;
 
@@ -73,19 +73,19 @@ pub fn run(target: &Target) -> Result<(), Box<dyn Error>> {
         println!("{}", "One pass:");
     }
 
-    for line in user_code.lines() {
-        let original_line = line;
-        let line = re.replace_all(line, ",").clone();
-        let line = line.trim();
-        let line = c_re.replace_all(line, " C").clone();
-        let line = line.trim();
-        let line = x_re.replace_all(line, " X").clone();
+    for code in user_code.lines() {
+        let original_code = code;
+        let code = re.replace_all(code, ",").clone();
+        let code = code.trim();
+        let code = c_re.replace_all(code, " C").clone();
+        let code = code.trim();
+        let code = x_re.replace_all(code, " X").clone();
 
-        match parser.translate(address, line.clone().trim(), line_number, original_line) {
+        match parser.translate(address, code.clone().trim(), line_number, original_code) {
             Ok((code, move_address, need_modify_obj_code)) => {
                 if parser.program_end && !code.nocode.get() {
                     if !target.verbose {
-                        print!("{}:\t{}\n-> ", line_number, original_line);
+                        print!("{}:\t{}\n-> ", line_number, original_code);
                     }
                     println!("{}", "Error: have code after END");
                     break;
@@ -99,7 +99,7 @@ pub fn run(target: &Target) -> Result<(), Box<dyn Error>> {
                             let code = &byte_code_list[*line_num];
                             if let Err(e) = code.re_alloc(&mut parser) {
                                 if !target.verbose {
-                                    print!("{}:\t{}\n-> ", line_number, original_line);
+                                    print!("{}:\t{}\n-> ", line_number, original_code);
                                 }
                                 println!("{}", e);
                             }
@@ -113,7 +113,9 @@ pub fn run(target: &Target) -> Result<(), Box<dyn Error>> {
                         }
                     }
                 }
-
+                if target.verbose {
+                    println!("move address {} ", move_address);
+                }
                 address += move_address;
             }
             Err(e) => {
@@ -123,7 +125,7 @@ pub fn run(target: &Target) -> Result<(), Box<dyn Error>> {
                 }
                 have_error = true;
                 if !target.verbose {
-                    print!("{}:\t{}\n-> ", line_number, original_line);
+                    print!("{}:\t{}\n-> ", line_number, original_code);
                 }
                 println!("{}", e);
             }
@@ -141,7 +143,7 @@ pub fn run(target: &Target) -> Result<(), Box<dyn Error>> {
         println!("\n\nObjectCode:");
         for i in 0..byte_code_list.len() {
             let code = &byte_code_list[i];
-            if !code.nocode.get() {
+            if !code.nocode.get() || true {
                 let width = (code.byte.get() * 2) as usize;
                 println!(
                     "{}:{} \n->0x{:04X} {:0width$X}",
@@ -155,22 +157,33 @@ pub fn run(target: &Target) -> Result<(), Box<dyn Error>> {
         }
     }
 
-    if have_error {
-        return Ok(());
-    }
-
     // print binary code
+    let mut start_address:u16;
+    let program_start: u16;
+    let program_name = parser.program_name.clone();
+    match parser.symbol(program_name.as_str()) {
+        Ok((s,need_alloc)) =>{
+            start_address = s;
+            program_start = s;
+            if need_alloc {
+                return Err("program name is not defined".into());
+            }
+        },
+        Err(e) => {
+            return Err(e.into());
+        }
+    }
     let mut contents = format!(
-        "H{:>6}{:06X}{:06X}\n",
+        "H^{:>6}{:06X}{:06X}\n",
         parser.program_name,
-        parser.program_start_address,
+        start_address,
         parser.program_length.get(),
     );
 
     let mut now_bit = 4096;
     let mut relocation_bit: u16 = 0;
-    let mut start_address = parser.program_start_address;
     let mut obj_code = String::new();
+    let mut count = 0;
 
     for i in 0..byte_code_list.len() {
         let code = &byte_code_list[i];
@@ -179,37 +192,36 @@ pub fn run(target: &Target) -> Result<(), Box<dyn Error>> {
             if code.base.borrow().to_string() != "" {
                 print!("{}:\t{}\n-> ", code.line_number, code.code);
                 println!(
-                    "operand {} or {} not found",
+                    "operand {} or base {} not found",
                     code.operand.borrow(),
                     code.base.borrow()
                 );
             } else {
                 print!("{}:\t{}\n-> ", code.line_number, code.code);
                 println!(
-                    "operand {} or {} not found",
+                    "operand {} not found",
                     code.operand.borrow(),
-                    code.base.borrow()
                 );
             }
             have_error = true;
         }
 
-        if (code.nocode.get() && width > 0) || obj_code.len() + width >= 60 {
+        if (code.nocode.get() && width > 0) || (obj_code.len()-count) + width >= 60 {
             // println!("len: {}, width: {}", obj_code.len(), width);
             if obj_code.len() > 0 {
-                if parser.program_start_address == 0x0 {
+                if program_start == 0x0 {
                     contents.push_str(&format!(
-                        "T{:06X}{:02X}{:03X}{}\n",
+                        "T^{:06X}^{:02X}^{:03X}^{}\n",
                         start_address,
-                        obj_code.len(),
+                        (obj_code.len()-count)/2,
                         relocation_bit,
                         obj_code
                     ));
                 } else {
                     contents.push_str(&format!(
-                        "T{:06X}{:03X}{}\n",
+                        "T^{:06X}^{:03X}^{}\n",
                         start_address,
-                        obj_code.len(),
+                        (obj_code.len()-count)/2,
                         obj_code
                     ));
                 }
@@ -218,6 +230,7 @@ pub fn run(target: &Target) -> Result<(), Box<dyn Error>> {
             relocation_bit = 0;
             start_address = code.address.get();
             obj_code = String::new();
+            count = 0;
         }
 
         // RESW RESB
@@ -239,10 +252,11 @@ pub fn run(target: &Target) -> Result<(), Box<dyn Error>> {
         }
 
         if !code.nocode.get() {
-            if code.byte.get() == 4 && !code.variable.get() {
+            if code.byte.get() == 4 && !code.variable.get() && code.ni.get() != 1{
                 relocation_bit += now_bit;
             }
-            obj_code.push_str(&format!("{:0width$X}", code.obj_code.get(), width = width));
+            count += 1;
+            obj_code.push_str(&format!("{:0width$X}^", code.obj_code.get(), width = width));
             now_bit /= 2;
         }
     }
@@ -250,23 +264,23 @@ pub fn run(target: &Target) -> Result<(), Box<dyn Error>> {
     if obj_code.len() > 0 {
         if parser.program_start_address == 0x0 {
             contents.push_str(&format!(
-                "T{:06X}{:02X}{:03X}{}\n",
+                "T^{:06X}^{:02X}^{:03X}{}\n",
                 start_address,
-                obj_code.len(),
+                (obj_code.len()-count)/2,
                 relocation_bit,
                 obj_code
             ));
         } else {
             contents.push_str(&format!(
-                "T{:06X}{:03X}{}\n",
+                "T^{:06X}^{:03X}^{}\n",
                 start_address,
-                obj_code.len(),
+                (obj_code.len()-count)/2,
                 obj_code
             ));
         }
     }
 
-    contents.push_str(&format!("E{:06X}", parser.program_start_address));
+    contents.push_str(&format!("E^{:06X}", parser.program_start_address));
     if !have_error {
         fs::write(&target.execute_file, contents)?;
     }

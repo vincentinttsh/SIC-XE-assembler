@@ -30,7 +30,7 @@ pub struct Code {
     pub obj_code: Cell<u32>,
     pub address: Cell<u16>,
     pub byte: Cell<u16>,
-    ni: Cell<u32>,
+    pub ni: Cell<u32>,
     pub variable: Cell<bool>,
     pub nocode: Cell<bool>,
     pub comment: String,
@@ -77,23 +77,19 @@ impl Code {
     }
     pub fn re_alloc(&self, parser: &mut Parser) -> Result<(), Box<dyn Error>> {
         let pc: i16 = (self.address.get() + self.byte.get()) as i16;
-        let operand_byte_code: u16;
+        let operand_address: u16;
 
-        (operand_byte_code, _) = parser.symbol(&self.operand.borrow())?;
+        (operand_address, _) = parser.symbol(&self.operand.borrow())?;
         if self.xbpe() % 2 == 1 {
             self.obj_code
-                .set(self.obj_code.get() + operand_byte_code as u32);
-            self.undone.set(false);
-        } else if self.ni.get() == 1 {
-            self.obj_code
-                .set(self.obj_code.get() + operand_byte_code as u32);
+                .set(self.obj_code.get() + operand_address as u32);
             self.undone.set(false);
         } else {
             let (operand, need_alloc, xbpe) = parser.fill_operand_base(
                 self.address.get(),
                 pc,
                 &self.base.borrow(),
-                operand_byte_code,
+                operand_address,
             )?;
             if !need_alloc {
                 let xbpe = xbpe + self.xbpe();
@@ -101,17 +97,17 @@ impl Code {
                     format!("{:0width$X}", operand, width = self.byte.get() as usize);
                 let mut operand = String::new();
 
-                for i in operand_str.len() - 3..operand_str.len() {
+                for i in operand_str.len() - (self.byte.get()as usize)..operand_str.len() {
                     operand.push(operand_str.chars().nth(i).unwrap());
                 }
-                let mut operand_byte_code = u32::from_str_radix(&operand, 16)?;
+                let mut operand_address = u32::from_str_radix(&operand, 16)?;
                 if self.byte.get() == 4 {
-                    operand_byte_code = operand_byte_code + ((xbpe as u32) << 20);
+                    operand_address = operand_address + ((xbpe as u32) << 20);
                 } else {
-                    operand_byte_code = operand_byte_code + ((xbpe as u32) << 12);
+                    operand_address = operand_address + ((xbpe as u32) << 12);
                 }
 
-                self.obj_code.set(self.obj_code.get() + operand_byte_code);
+                self.obj_code.set(self.obj_code.get() + operand_address);
                 self.undone.set(false);
             }
         }
@@ -175,6 +171,10 @@ impl Parser {
         let comment_offset = tmp.find(".").unwrap_or(tmp.len());
         let user_code: String = tmp.drain(..comment_offset).collect();
         let user_code = user_code.trim();
+        // tmp = String::from(user_code);
+        // let quote_offset = tmp.find("\'").unwrap_or(tmp.len());
+        // let user_code: String = tmp.drain(..quote_offset).collect();
+        // let user_code = user_code.trim();
 
         // return value
         let mut need_modify_obj_code: Vec<u16>;
@@ -199,6 +199,19 @@ impl Parser {
 
         let user_code: Vec<&str> = self.separator.split(&user_code).into_iter().collect();
 
+        // let byte_prefix: Regex = Regex::new(r"^[CX]'")?;
+        // let mut user_code_tmp: String;
+
+        // if user_code.len() > 3 && byte_prefix.is_match(&user_code[2]) {
+        //     user_code_tmp = String::from(user_code[2]);
+        //     for i in 2..user_code.len() {
+        //         print!("{}", user_code[i]);
+        //         user_code_tmp.push_str(user_code[i])
+        //     }
+        //     user_code = vec![user_code[0], user_code[1], &user_code_tmp];
+        // }
+
+
         if user_code.len() == 1 {
             let mnemonic = user_code[0].trim();
             let byte_code: u8;
@@ -221,6 +234,7 @@ impl Parser {
                 Ok((obj_code, byte, _, _, _, _)) => {
                     code.obj_code.set(obj_code);
                     code.byte.set(byte as u16);
+                    move_address = byte as u16;
                 }
                 Err(e) => {
                     return Err(e);
@@ -246,6 +260,7 @@ impl Parser {
                     Ok((obj_code, byte, _, _, _, _)) => {
                         code.obj_code.set(obj_code);
                         code.byte.set(byte as u16);
+                        move_address = byte as u16;
                     }
                     Err(e) => {
                         return Err(e);
@@ -290,14 +305,14 @@ impl Parser {
                         move_address = 0;
                         self.program_end = true;
                         self.symbol_legal(operand)?;
-                        let (operand_byte_code, need_alloc) =
+                        let (operand_address, need_alloc) =
                             self.symbol_table.get(operand, address)?;
                         if need_alloc {
                             return Err(format!("illegal operand：{}", operand).into());
                         } else {
-                            self.program_start_address = operand_byte_code;
+                            self.program_start_address = operand_address;
                             if self.verbose {
-                                print!("program execute at 0x{:04X} ", operand_byte_code);
+                                print!("program execute at 0x{:04X} ", operand_address);
                             }
                         }
                         code.nocode.set(true);
@@ -308,6 +323,11 @@ impl Parser {
                         } else {
                             format = 3;
                         }
+
+                        if mnemonic.matches('+').count() > 1 {
+                            return Err(format!("invalid mnemonic {}", mnemonic).into());
+                        }
+
                         let mnemonic = mnemonic.replace("+", "");
                         if mnemonic == "LDB" {
                             if self.wait_for_base.get() {
@@ -335,6 +355,7 @@ impl Parser {
                                         code.base.replace(String::from(base));
                                         code.ni.set(ni);
                                         code.operand.replace(String::from(operand));
+                                        move_address = byte as u16;
                                         if need_alloc {
                                             code.undone.set(true);
                                         }
@@ -451,6 +472,11 @@ impl Parser {
                     if operand.len() <= 3 {
                         return Err(format!("illegal operand：{}", operand).into());
                     }
+                    if operand.bytes().nth(1).unwrap() != b'\''
+                        || operand.bytes().nth(operand.len() - 1).unwrap() != b'\''
+                    {
+                        return Err(format!("illegal operand：{}", operand).into());
+                    }
                     if operand.bytes().nth(0).unwrap() == b'C' {
                         let mut tmp_obj_code = String::new();
 
@@ -464,6 +490,7 @@ impl Parser {
 
                         obj_code = u32::from_str_radix(&tmp_obj_code, 16)?;
                         code.byte.set((operand.len() - 3) as u16);
+                        move_address = (operand.len() - 3) as u16;
                     } else if operand.bytes().nth(0).unwrap() == b'X' {
                         let mut tmp_obj_code = String::new();
                         let len = (operand.len() - 3) as u32;
@@ -483,8 +510,11 @@ impl Parser {
 
                         obj_code = u32::from_str_radix(&tmp_obj_code, 16)?;
                         code.byte.set((len / 2) as u16);
+                        move_address = (len / 2) as u16;
                     } else {
-                        return Err(format!("unknown operand：{}", operand).into());
+                        return Err(
+                            format!("unknown operand：{} only support X and C", operand).into()
+                        );
                     }
 
                     code.obj_code.set(obj_code);
@@ -531,6 +561,7 @@ impl Parser {
                                     code.base.replace(String::from(base));
                                     code.operand.replace(String::from(operand));
                                     code.ni.set(ni);
+                                    move_address = byte as u16;
                                     if need_alloc {
                                         code.undone.set(true);
                                     }
@@ -557,6 +588,10 @@ impl Parser {
                     return Err(e);
                 }
             }
+        }
+
+        if user_code.len() > 3 {
+            return Err("invalid user code".into());
         }
 
         if move_address != 0 {
@@ -597,6 +632,11 @@ impl Parser {
         if self.reserve.get(label) != None {
             return Err(format!("{} is a reserve word", label).into());
         }
+
+        if !self.symbol_table.is_legal(label){
+            return Err(format!("{} is not legal ", label).into());
+        }
+
         return Ok(());
     }
 
@@ -648,7 +688,11 @@ impl Parser {
                         return Err(format!("invalid register：{}", operand[0]).into());
                     }
                 } else {
-                    return Err(format!("instruction：{} format error", mnemonic).into());
+                    return Err(format!(
+                        "invalid operand: {} can only contain one comma",
+                        mnemonic
+                    )
+                    .into());
                 }
                 byte = opcode_format;
                 finial_operand = String::new();
@@ -656,6 +700,11 @@ impl Parser {
             }
             34 => {
                 if mnemonic == "RSUB" {
+                    if operand.len() > 0 {
+                        return Err(
+                            format!("instruction：{} can not have operand", mnemonic).into()
+                        );
+                    }
                     obj_code = (byte_code as u32 + Parser::SIMPLE_ADDRESS) << 2 * 8;
                     byte = 3;
                     need_alloc = false;
@@ -689,29 +738,49 @@ impl Parser {
                         if operand[1] == "X" {
                             xbpe += 8;
                         } else {
-                            return Err(format!("invalid operand：{}", original_operand).into());
+                            return Err(format!(
+                                "invalid Register：{} only support X register",
+                                original_operand
+                            )
+                            .into());
                         }
                     }
                     if operand.len() > 2 {
-                        return Err(format!("invalid operand：{}", original_operand).into());
+                        return Err(format!(
+                            "invalid operand: {} can only contain one comma",
+                            original_operand
+                        )
+                        .into());
                     }
 
                     finial_operand = String::from(operand[0]);
 
-                    if ni == Parser::IMMEDIATE_ADDRESS {
-                        if let Ok(byte) = u16::from_str_radix(operand[0], 10) {
-                            operand_byte_code = byte;
-                        } else {
-                            self.symbol_legal(operand[0])?;
-                            (operand_byte_code, need_alloc) =
-                                self.symbol_table.get(operand[0], address)?;
-                        }
+                    let num: i32;
+                    let is_digit: bool;
 
+                    if ni == Parser::IMMEDIATE_ADDRESS {
+                        match i32::from_str_radix(operand[0], 10) {
+                            Ok(n) => {
+                                num = n;
+                                is_digit = true;
+                            }
+                            Err(_) => {
+                                num = -1;
+                                is_digit = false;
+                            }
+                        }
+                    } else {
+                        num = -1;
+                        is_digit = false;
+                    }
+
+                    if ni == Parser::IMMEDIATE_ADDRESS && is_digit {
                         if format == 3 {
-                            let operand = operand_byte_code as i32;
+                            let operand = num;
                             obj_code = self.fill_obj_code(byte_code, ni, xbpe, operand, 3)?;
                         } else {
-                            let operand = operand_byte_code as i32;
+                            let operand = num;
+                            xbpe += 1;
                             obj_code = self.fill_obj_code(byte_code, ni, xbpe, operand, 5)?;
                         }
                     } else {
@@ -731,11 +800,13 @@ impl Parser {
                                 obj_code = self.fill_obj_code(byte_code, ni, xbpe, operand, 5)?;
                             }
                         } else if format == 3 {
-                            let pc: i16 = (address + (opcode_format as u16)) as i16;
+                            let pc: i16 = (address + (format as u16)) as i16;
                             let operand: i32;
-                            (operand, need_alloc) =
+                            let move_xbpe: u8;
+                            (operand, need_alloc, move_xbpe) =
                                 self.fill_operand(address, pc, operand_byte_code)?;
-                            obj_code = self.fill_obj_code(byte_code, ni, xbpe, operand, 3)?;
+                            obj_code =
+                                self.fill_obj_code(byte_code, ni, xbpe + move_xbpe, operand, 3)?;
                         } else {
                             let operand = operand_byte_code as i32;
                             obj_code = self.fill_obj_code(byte_code, ni, xbpe, operand, 5)?;
@@ -775,13 +846,12 @@ impl Parser {
         let operand_str: String = format!("{:0width$X}", operand, width = width);
         let mut operand = String::new();
 
-        for i in operand_str.len() - 3..operand_str.len() {
+        for i in operand_str.len() - width..operand_str.len() {
             operand.push(operand_str.chars().nth(i).unwrap());
         }
 
         let obj_code =
             u32::from_str_radix(&format!("{:02X}{:01X}{}", byte_code, xbpe, operand), 16)?;
-
         return Ok(obj_code);
     }
 
@@ -794,7 +864,9 @@ impl Parser {
     ) -> Result<(i32, bool, u8), Box<dyn Error>> {
         // FIXME:check overflow
         let operand_byte_code = (operand as i16) - pc;
-
+        if self.verbose {
+            println!("address 0x{:04X} -> {:X} ", address, operand_byte_code);
+        }
         if operand_byte_code < -2048 || operand_byte_code > 2047 {
             if base == "" {
                 return Err(format!("re-alloc: need base, but don't have").into());
@@ -824,10 +896,12 @@ impl Parser {
         address: u16,
         pc: i16,
         operand: u16,
-    ) -> Result<(i32, bool), Box<dyn Error>> {
+    ) -> Result<(i32, bool, u8), Box<dyn Error>> {
         // FIXME:check overflow
         let operand_byte_code = (operand as i16) - pc;
-
+        if self.verbose {
+            println!("address 0x{:04X} -> {:X} ", address, operand_byte_code);
+        }
         if operand_byte_code < -2048 || operand_byte_code > 2047 {
             if self.base.borrow().to_string() == "" {
                 return Err(format!("need base, but don't have").into());
@@ -835,16 +909,16 @@ impl Parser {
             let (base_address, need_alloc) = self.symbol_table.get(&self.base.borrow(), address)?;
             let base_address = base_address as i32;
             if need_alloc {
-                return Ok((base_address, true));
+                return Ok((base_address, true, 0));
             } else {
                 let base = (operand as i32) - base_address;
                 if base > 4095 || base < 0 {
                     return Err(format!("use base {} also out of range", self.base.borrow()).into());
                 }
-                return Ok((base, need_alloc));
+                return Ok((base, need_alloc, 4));
             }
         } else {
-            return Ok((operand_byte_code as i32, false));
+            return Ok((operand_byte_code as i32, false, 2));
         }
     }
 
