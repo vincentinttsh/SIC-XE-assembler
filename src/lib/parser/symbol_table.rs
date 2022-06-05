@@ -1,86 +1,110 @@
-use std::collections::HashMap;
-use std::error::Error;
-use std::cell::Cell;
-use std::cell::RefCell;
 use regex::Regex;
+use std::collections::HashMap;
 
+#[path = "../err.rs"]
+mod err;
+
+pub struct SymbolData {
+    location: u32,
+    need_alloc: bool,
+    waiting_list: Vec<u32>,
+}
 
 pub struct SymbolTable {
     table: HashMap<String, SymbolData>,
-}
-
-pub struct SymbolData {
-    address: Cell<u16>,
-    need_alloc: Cell<bool>,
-    wait_byte_code: RefCell<Vec<u16>>,
+    legal_symbol_regex: Regex,
 }
 
 impl SymbolTable {
     pub fn new() -> SymbolTable {
-       return SymbolTable { table: HashMap::new() }
+        SymbolTable {
+            table: HashMap::new(),
+            legal_symbol_regex: Regex::new(r"^[A-Z][A-Z0-9]*$").unwrap(),
+        }
     }
 
     pub fn is_legal(&self, symbol: &str) -> bool {
-        let re = Regex::new(r"^[A-Z0-9]+$").unwrap();
-        return re.is_match(symbol);
+        return self.legal_symbol_regex.is_match(symbol);
     }
 
-    pub fn get(&mut self, symbol: &str, address: u16) -> Result<(u16, bool), Box<dyn Error>> {
-        if !self.is_legal(symbol) {
-            return Err(format!("illegal operand: {}", symbol).into());
+    pub fn get_location(&self, symbol: &str) -> Option<(u32, bool)> {
+        if self.table.contains_key(symbol) {
+            let data = self.table.get(symbol).unwrap();
+            return Some((data.location, data.need_alloc));
+        } else {
+            return None;
         }
-        match self.table.get(symbol) {
+    }
+
+    pub fn get_location_or_create(
+        &mut self,
+        symbol: &str,
+        obj_code_location: u32,
+    ) -> Result<(u32, bool), String> {
+        if !self.is_legal(symbol) {
+            return Err(err::handler().e101(symbol));
+        }
+        match self.table.get_mut(symbol) {
             Some(data) => {
-                if data.need_alloc.get() {
-                    data.wait_byte_code.borrow_mut().push(address);
+                if data.need_alloc {
+                    data.waiting_list.push(obj_code_location);
                 }
-                return Ok((data.address.get(), data.need_alloc.get()));
+                return Ok((data.location, data.need_alloc));
             }
             None => {
-                self.insert_without_address(symbol, address);
+                self.no_location_insert(symbol, obj_code_location);
                 return Ok((0x0, true));
             }
-       }
-    }
-
-    fn insert_without_address(&mut self, symbol: &str, address: u16) {
-        let mut wait_byte_code = Vec::new();
-        wait_byte_code.push(address);
-        self.table.insert(symbol.to_string(), SymbolData { 
-            address: Cell::new(0x0),
-            need_alloc: Cell::new(true),
-            wait_byte_code: RefCell::new(wait_byte_code),
-        });
-    }
-
-    pub fn insert(&mut self, symbol: &str, address: u16) -> Result<Vec<u16>, Box<dyn Error>> {
-        if !self.is_legal(symbol) {
-            return Err(format!("illegal label: {}", symbol).into());
         }
-        match self.table.get(symbol) {
+    }
+
+    pub fn insert(&mut self, symbol: &str, obj_code_location: u32) -> Result<Vec<u32>, String> {
+        if !self.is_legal(symbol) {
+            return Err(err::handler().e101(symbol));
+        }
+
+        match self.table.get_mut(symbol) {
             Some(symbol_data) => {
-                if symbol_data.need_alloc.get() {
-                    symbol_data.need_alloc.set(false);
-                    symbol_data.address.set(address);
-                    return Ok(symbol_data.wait_byte_code.borrow().clone());
+                if symbol_data.need_alloc {
+                    symbol_data.need_alloc = false;
+                    symbol_data.location = obj_code_location;
+                    return Ok(symbol_data.waiting_list.clone());
                 } else {
-                    return Err(format!("duplicate symbol：{}", symbol).into());
+                    return Err(err::handler().e102(symbol));
                 }
-            },
+            }
             None => {
-                self.table.insert(symbol.to_string(), SymbolData { 
-                    address: Cell::new(address),
-                    need_alloc: Cell::new(false),
-                    wait_byte_code: RefCell::new(Vec::new()),
-                });
-                return Ok(Vec::new());
+                self.have_location_insert(symbol, obj_code_location);
+                return Ok(vec![]);
             }
         }
     }
 
     pub fn inter(&self) {
         self.table.iter().for_each(|(k, v)| {
-            println!("{} -> {:04X}", k, v.address.get());
+            println!("{} -> {:04X}", k, v.location);
         });
+    }
+
+    fn no_location_insert(&mut self, symbol: &str, obj_code_location: u32) {
+        self.table.insert(
+            symbol.to_string(),
+            SymbolData {
+                location: 0,
+                need_alloc: true,
+                waiting_list: vec![obj_code_location],
+            },
+        );
+    }
+
+    fn have_location_insert(&mut self, symbol: &str, obj_code_location: u32) {
+        self.table.insert(
+            symbol.to_string(),
+            SymbolData {
+                location: obj_code_location,
+                need_alloc: false,
+                waiting_list: vec![],
+            },
+        );
     }
 }

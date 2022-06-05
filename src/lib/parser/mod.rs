@@ -1,140 +1,199 @@
 use regex::Regex;
-use std::cell::Cell;
-use std::cell::RefCell;
 use std::collections::HashMap;
-use std::error::Error;
 
 mod opcode_table;
 use opcode_table::OpcodeTable;
 mod symbol_table;
 use symbol_table::SymbolTable;
 
-pub struct Parser {
-    opcode_table: OpcodeTable,
-    symbol_table: SymbolTable,
-    separator: Regex,
-    comma_separator: Regex,
-    program_start: bool,
-    pub program_start_address: u16,
-    pub program_end: bool,
-    pub program_name: String,
-    pub program_length: Cell<u16>,
-    wait_for_base: Cell<bool>,
-    reserve: HashMap<String, ()>,
-    registers: HashMap<String, u8>,
-    base: RefCell<String>,
-    verbose: bool,
-}
+#[path = "../err.rs"]
+mod err;
+#[path = "../log/mod.rs"]
+mod log;
 
 pub struct Code {
-    pub obj_code: Cell<u32>,
-    pub address: Cell<u16>,
-    pub byte: Cell<u16>,
-    pub ni: Cell<u32>,
-    pub variable: Cell<bool>,
-    pub nocode: Cell<bool>,
-    pub comment: String,
-    pub code: String,
+    pub obj_code: u64,
+    _char_obj_code: String,
+    _char_mode: bool,
+    pub location: u32,
+    pub byte: u32,
+    pub ni: u8,
+    pub variable: bool,
+    pub no_obj_code: bool,
+    pub source_code: String,
     pub line_number: u32,
-    pub undone: Cell<bool>,
-    pub base: RefCell<String>,
-    pub operand: RefCell<String>,
+    pub undone: bool,
+    pub base: String,
+    pub operand: String,
 }
 
 impl Code {
-    pub fn new(user_code: &str, comment: &str, line_number: u32) -> Code {
+    pub fn new(
+        line_number: u32,
+        source_code: &str,
+        location: u32,
+        ni: u8,
+        base: String,
+        operand: String,
+        obj_code: u64,
+        byte: u32,
+        variable: bool,
+        no_obj_code: bool,
+        undone: bool,
+    ) -> Code {
         Code {
-            obj_code: Cell::new(0x0),
-            address: Cell::new(0x0),
-            byte: Cell::new(0x0),
-            ni: Cell::new(0x0),
-            variable: Cell::new(false),
-            nocode: Cell::new(false),
-            comment: comment.to_string(),
-            code: user_code.to_string(),
             line_number: line_number,
-            undone: Cell::new(false),
-            base: RefCell::new(String::new()),
-            operand: RefCell::new(String::new()),
+            source_code: String::from(source_code),
+            location: location,
+            ni: ni,
+            base: base,
+            operand: String::from(operand),
+            obj_code: obj_code,
+            byte: byte,
+            variable: variable,
+            no_obj_code: no_obj_code,
+            undone: undone,
+            _char_obj_code: String::new(),
+            _char_mode: false,
         }
     }
-    fn xbpe(&self) -> u8 {
-        if self.byte.get() > 2 {
-            let obj_code = format!(
-                "{:0width$X}",
-                self.obj_code.get(),
-                width = self.byte.get() as usize
-            )
-            .chars()
-            .nth(2)
-            .unwrap();
 
-            let xbpe = u8::from_str_radix(&obj_code.to_string(), 16).unwrap();
-
-            return xbpe;
+    pub fn empty(line_number: u32, source_code: String) -> Code {
+        Code {
+            line_number: line_number,
+            source_code: source_code,
+            ni: 0,
+            base: String::new(),
+            operand: String::new(),
+            obj_code: 0,
+            location: 0,
+            byte: 0,
+            variable: false,
+            no_obj_code: true,
+            undone: false,
+            _char_obj_code: String::new(),
+            _char_mode: false,
         }
-        return 0;
     }
-    pub fn re_alloc(&self, parser: &mut Parser) -> Result<(), Box<dyn Error>> {
-        let pc: i16 = (self.address.get() + self.byte.get()) as i16;
-        let operand_address: u16;
 
-        (operand_address, _) = parser.symbol(&self.operand.borrow())?;
-        if self.xbpe() % 2 == 1 {
-            self.obj_code
-                .set(self.obj_code.get() + operand_address as u32);
-            self.undone.set(false);
-        } else {
-            let (operand, need_alloc, xbpe) = parser.fill_operand_base(
-                self.address.get(),
-                pc,
-                &self.base.borrow(),
-                operand_address,
-            )?;
-            if !need_alloc {
-                let xbpe = xbpe + self.xbpe();
-                let operand_str: String =
-                    format!("{:0width$X}", operand, width = self.byte.get() as usize);
-                let mut operand = String::new();
+    pub fn re_alloc(&mut self, parser: &mut Parser) -> Result<(), String> {
+        let pc: i32;
+        let operand_location: u32;
 
-                for i in operand_str.len() - (self.byte.get()as usize)..operand_str.len() {
-                    operand.push(operand_str.chars().nth(i).unwrap());
-                }
-                let mut operand_address = u32::from_str_radix(&operand, 16)?;
-                if self.byte.get() == 4 {
-                    operand_address = operand_address + ((xbpe as u32) << 20);
-                } else {
-                    operand_address = operand_address + ((xbpe as u32) << 12);
-                }
-
-                self.obj_code.set(self.obj_code.get() + operand_address);
-                self.undone.set(false);
+        match self.location.checked_add(self.byte as u32) {
+            Some(new_length) => {
+                pc = new_length as i32;
+            }
+            None => {
+                return Err(err::handler().e306());
             }
         }
 
+        match parser.get_symbol_location(&self.operand) {
+            Some((location, need_alloc)) => {
+                if need_alloc {
+                    return Err(err::handler().e999(&format!(
+                        "operand {} is not done, but call re_alloc",
+                        self.operand
+                    )));
+                }
+                operand_location = location;
+            }
+            None => {
+                return Err(err::handler().e999(&format!(
+                    "operand {} is not defined, but call re_alloc",
+                    self.operand
+                )));
+            }
+        }
+
+        if self.xbpe() % 2 == 1 {
+            self.obj_code += operand_location as u64;
+            self.undone = false;
+            return Ok(());
+        }
+
+        let (operand_obj_code, need_alloc, move_xbpe) =
+            parser.fill_operand(self.location, pc, self.base.as_ref(), operand_location)?;
+        if need_alloc {
+            return Ok(());
+        }
+
+        let xbpe = self.xbpe() + move_xbpe;
+        let operand_str: String =
+            format!("{:0width$X}", operand_obj_code, width = self.byte as usize);
+        let mut operand = String::new();
+
+        for i in operand_str.len() - (self.byte as usize)..operand_str.len() {
+            operand.push(operand_str.chars().nth(i).unwrap());
+        }
+        let operand_obj_code: u64;
+        if self.byte == 4 {
+            operand_obj_code = u64::from_str_radix(&operand, 16).unwrap() + ((xbpe as u64) << 20);
+        } else {
+            operand_obj_code = u64::from_str_radix(&operand, 16).unwrap() + ((xbpe as u64) << 12);
+        }
+        self.obj_code += operand_obj_code;
+        self.undone = false;
+
         return Ok(());
+    }
+
+    fn xbpe(&self) -> u8 {
+        if self.byte <= 2 {
+            return 0;
+        }
+        let xbpe_bit = format!("{:0width$X}", self.obj_code, width = self.byte as usize)
+            .chars()
+            .nth(2)
+            .unwrap();
+        return u8::from_str_radix(xbpe_bit.to_string().as_str(), 16).unwrap();
     }
 }
 
-impl Parser {
-    const IMMEDIATE_ADDRESS: u32 = 0b01;
-    const INDIRECT_ADDRESS: u32 = 0b10;
-    const SIMPLE_ADDRESS: u32 = 0b11;
+enum AddressingMode {
+    Immediate = 0b01,
+    Indirect = 0b10,
+    Simple = 0b11,
+}
 
-    pub fn new(verbose: bool) -> Result<Parser, Box<dyn Error>> {
-        Ok(Parser {
-            opcode_table: OpcodeTable::new()?,
+enum SizeLimit {
+    Location = 0xfffff, //2^20
+}
+
+pub struct Parser {
+    opcode_table: OpcodeTable,
+    symbol_table: SymbolTable,
+    pub program_name: String,
+    program_start: bool,
+    pub program_start_address: u32,
+    pub program_end: bool,
+    pub program_length: u32,
+    base: String,
+    wait_for_base: bool,
+    space_separator: Regex,
+    char_separator: Regex,
+    comma_separator: Regex,
+    reserve: HashMap<String, ()>,
+    registers: HashMap<String, u8>,
+    verbose: bool,
+}
+
+impl Parser {
+    pub fn new(verbose: bool) -> Parser {
+        Parser {
+            opcode_table: OpcodeTable::new(),
             symbol_table: SymbolTable::new(),
-            separator: Regex::new(r"[ \t]+")?,
-            comma_separator: Regex::new(r",")?,
+            program_name: String::new(),
             program_start: false,
             program_start_address: 0x0,
             program_end: false,
-            program_name: String::new(),
-            program_length: Cell::new(0),
-            base: RefCell::new(String::new()),
-            verbose: verbose,
-            wait_for_base: Cell::new(false),
+            program_length: 0x0,
+            base: String::new(),
+            wait_for_base: false,
+            space_separator: Regex::new(r"[ \t]+").unwrap(),
+            char_separator: Regex::new(r"C'").unwrap(),
+            comma_separator: Regex::new(r",").unwrap(),
             reserve: HashMap::from([
                 ("WORD".to_string(), ()),
                 ("BYTE".to_string(), ()),
@@ -153,696 +212,826 @@ impl Parser {
                 ("T".to_string(), 0x5),
                 ("F".to_string(), 0x6),
             ]),
-        })
+            verbose: verbose,
+        }
     }
 
-    pub fn symbol(&mut self, symbol: &str) -> Result<(u16, bool), Box<dyn Error>> {
-        return self.symbol_table.get(symbol, 0x0);
+    pub fn get_symbol_location(&self, symbol: &str) -> Option<(u32, bool)> {
+        return self.symbol_table.get_location(symbol);
+    }
+
+    pub fn symbols_inter(&self) {
+        self.symbol_table.inter();
     }
 
     pub fn translate(
         &mut self,
-        address: u16,
-        user_code: &str,
         line_number: u32,
-        original_line: &str,
-    ) -> Result<(Code, u16, Vec<u16>), Box<dyn Error>> {
-        let mut tmp = String::from(user_code);
-        let comment_offset = tmp.find(".").unwrap_or(tmp.len());
-        let user_code: String = tmp.drain(..comment_offset).collect();
-        let user_code = user_code.trim();
-        // tmp = String::from(user_code);
-        // let quote_offset = tmp.find("\'").unwrap_or(tmp.len());
-        // let user_code: String = tmp.drain(..quote_offset).collect();
-        // let user_code = user_code.trim();
+        location: u32,
+        user_code: &str,
+        source_code: &str,
+    ) -> Result<(Code, u32, Vec<u32>), String> {
+        // return Value
+        let (code, offset, need_modify_code): (Code, u32, Vec<u32>);
 
-        // return value
-        let mut need_modify_obj_code: Vec<u16>;
-        need_modify_obj_code = Vec::new();
-        let mut move_address: u16 = 3;
-        let code = Code::new(user_code, &tmp, line_number);
+        // remove comment
+        let mut user_code = String::from(user_code);
+        let comment_offset = user_code.find(".").unwrap_or(user_code.len());
+        let user_code: String = user_code.drain(..comment_offset).collect();
+        let user_code = user_code.trim();
 
         if user_code.len() == 0 {
-            if self.verbose {
-                print!("{}:\t{}\n-> ", line_number, original_line);
-                println!("{}", "Empty line");
-            }
-
-            move_address = 0;
-            code.nocode.set(true);
-            return Ok((code, move_address, Vec::new()));
+            log::println(
+                &format!("{}:\t{}\n-> {}", line_number, source_code, "Empty line"),
+                self.verbose,
+            );
+            code = Code::empty(line_number, String::from(source_code));
+            offset = 0;
+            need_modify_code = vec![];
+            return Ok((code, offset, need_modify_code));
         }
 
-        if self.verbose {
-            print!("{}:\t{}\n-> ", line_number, original_line);
-        }
+        log::print(
+            &format!("{}:\t{}\n-> ", line_number, source_code),
+            self.verbose,
+        );
 
-        let user_code: Vec<&str> = self.separator.split(&user_code).into_iter().collect();
-
-        // let byte_prefix: Regex = Regex::new(r"^[CX]'")?;
-        // let mut user_code_tmp: String;
-
-        // if user_code.len() > 3 && byte_prefix.is_match(&user_code[2]) {
-        //     user_code_tmp = String::from(user_code[2]);
-        //     for i in 2..user_code.len() {
-        //         print!("{}", user_code[i]);
-        //         user_code_tmp.push_str(user_code[i])
-        //     }
-        //     user_code = vec![user_code[0], user_code[1], &user_code_tmp];
-        // }
-
-
-        if user_code.len() == 1 {
-            let mnemonic = user_code[0].trim();
-            let byte_code: u8;
-            let opcode_format: u8;
-
-            if !self.program_start {
-                return Err("code need to start with a legal START mnemonic".into());
+        // separate source code by space and tab
+        let mut result: Vec<&str>;
+        match self.char_separator.find(&user_code) {
+            Some(mat) => {
+                let code_1 = &user_code[..mat.start()];
+                let code_1 = code_1.trim();
+                let code_2 = &user_code[mat.start()..];
+                result = self.space_separator.split(code_1).collect::<Vec<&str>>();
+                result.push(code_2);
             }
-
-            match self.opcode_table.get(mnemonic) {
-                Some(instruction) => {
-                    (byte_code, opcode_format) = instruction;
-                }
-                None => {
-                    return Err(format!("unknown instruction：{}", mnemonic).into());
-                }
-            }
-
-            match self.code_translate(address, byte_code, mnemonic, "", opcode_format, 1) {
-                Ok((obj_code, byte, _, _, _, _)) => {
-                    code.obj_code.set(obj_code);
-                    code.byte.set(byte as u16);
-                    move_address = byte as u16;
-                }
-                Err(e) => {
-                    return Err(e);
-                }
+            None => {
+                result = self
+                    .space_separator
+                    .split(&user_code)
+                    .collect::<Vec<&str>>();
             }
         }
+        let user_code = result.as_slice();
 
-        if user_code.len() == 2 {
-            let field_1 = user_code[0].trim();
-            let field_2 = user_code[1].trim();
-            let byte_code: u8;
-            let opcode_format: u8;
+        match user_code.len() {
+            1 => {
+                let mnemonic = user_code[0].trim();
+                let (opcode, instruction_format): (u8, u8);
 
-            if !self.program_start {
-                return Err("code need to start with a legal START mnemonic".into());
-            }
+                if !self.program_start {
+                    return Err(err::handler().e301());
+                }
 
-            // no operand
-            if let Some(instruction) = self.opcode_table.get(field_2) {
-                (byte_code, opcode_format) = instruction;
+                if self.wait_for_base && mnemonic != "BASE" {
+                    return Err(err::handler().e303());
+                }
 
-                match self.code_translate(address, byte_code, field_2, "", opcode_format, 1) {
-                    Ok((obj_code, byte, _, _, _, _)) => {
-                        code.obj_code.set(obj_code);
-                        code.byte.set(byte as u16);
-                        move_address = byte as u16;
+                match self.opcode_table.get(mnemonic) {
+                    Some(instruction) => {
+                        (opcode, instruction_format) = *instruction;
+                    }
+                    None => {
+                        return Err(err::handler().e201(mnemonic));
+                    }
+                }
+
+                match self.code_translate(location, mnemonic, opcode, "", instruction_format, false)
+                {
+                    Ok((ni, obj_code, finial_operand, undone, byte)) => {
+                        offset = byte as u32;
+                        code = Code::new(
+                            line_number,
+                            source_code,
+                            location,
+                            ni,
+                            self.base.clone(),
+                            finial_operand,
+                            obj_code,
+                            offset,
+                            false,
+                            false,
+                            undone,
+                        );
+                        need_modify_code = vec![];
                     }
                     Err(e) => {
                         return Err(e);
                     }
                 }
+            }
+            2 => {
+                let (field_1, field_2) = (user_code[0].trim(), user_code[1].trim());
+                let (opcode, instruction_format): (u8, u8);
 
-                self.symbol_legal(field_1)?;
-
-                match self.symbol_table.insert(field_1, address) {
-                    Ok(wait_byte_code) => {
-                        need_modify_obj_code = wait_byte_code;
-                    }
-                    Err(e) => {
-                        return Err(e);
-                    }
+                if !self.program_start {
+                    return Err(err::handler().e301());
                 }
-            } else {
-                let mnemonic = field_1;
-                let operand = field_2;
-                let format: u8;
 
-                match mnemonic {
-                    "BASE" => {
-                        move_address = 0;
-                        self.symbol_legal(operand)?;
-                        if self.wait_for_base.get() {
-                            self.wait_for_base.set(false);
-                        } else {
-                            return Err("BASE must be after LDB".into());
-                        }
-                        if self.symbol_table.is_legal(operand) {
-                            self.base.replace(String::from(operand));
-                            if self.verbose {
-                                print!("now base is {}", operand);
-                            }
-                        } else {
-                            return Err(format!("illegal operand：{}", operand).into());
-                        }
-                        code.nocode.set(true);
+                // Case 1: no operand
+                if let Some(instruction) = self.opcode_table.get(field_2) {
+                    (opcode, instruction_format) = *instruction;
+                    let (label, mnemonic) = (field_1, field_2);
+
+                    if self.wait_for_base && mnemonic != "BASE" {
+                        return Err(err::handler().e303());
                     }
-                    "END" => {
-                        move_address = 0;
-                        self.program_end = true;
-                        self.symbol_legal(operand)?;
-                        let (operand_address, need_alloc) =
-                            self.symbol_table.get(operand, address)?;
-                        if need_alloc {
-                            return Err(format!("illegal operand：{}", operand).into());
-                        } else {
-                            self.program_start_address = operand_address;
-                            if self.verbose {
-                                print!("program execute at 0x{:04X} ", operand_address);
-                            }
+
+                    match self.code_translate(
+                        location,
+                        mnemonic,
+                        opcode,
+                        "",
+                        instruction_format,
+                        false,
+                    ) {
+                        Ok((ni, obj_code, finial_operand, undone, byte)) => {
+                            offset = byte as u32;
+                            code = Code::new(
+                                line_number,
+                                source_code,
+                                location,
+                                ni,
+                                self.base.clone(),
+                                finial_operand,
+                                obj_code,
+                                offset,
+                                false,
+                                false,
+                                undone,
+                            );
                         }
-                        code.nocode.set(true);
+                        Err(e) => {
+                            return Err(e);
+                        }
                     }
-                    _ => {
-                        if mnemonic.bytes().nth(0).unwrap() == b'+' {
-                            format = 4;
-                        } else {
-                            format = 3;
-                        }
 
-                        if mnemonic.matches('+').count() > 1 {
-                            return Err(format!("invalid mnemonic {}", mnemonic).into());
-                        }
+                    if let Err(e) = self.symbol_legal(label) {
+                        return Err(format!("label invalid: {}", e));
+                    }
 
-                        let mnemonic = mnemonic.replace("+", "");
-                        if mnemonic == "LDB" {
-                            if self.wait_for_base.get() {
-                                return Err(
-                                    "You are already load to base without BASE mnemonic".into()
-                                );
+                    match self.symbol_table.insert(label, location) {
+                        Ok(waiting_list) => {
+                            need_modify_code = waiting_list;
+                        }
+                        Err(e) => {
+                            return Err(e);
+                        }
+                    }
+                } else {
+                    // Case 2: have operand
+                    let (mnemonic, operand) = (field_1, field_2);
+
+                    if self.wait_for_base && mnemonic != "BASE" {
+                        return Err(err::handler().e303());
+                    }
+
+                    match mnemonic {
+                        "BASE" => {
+                            offset = 0;
+
+                            if let Err(e) = self.symbol_legal(operand) {
+                                return Err(format!("operand invalid: {}", e));
+                            }
+                            if self.wait_for_base {
+                                self.wait_for_base = false;
                             } else {
-                                self.wait_for_base.set(true);
+                                return Err(err::handler().e302());
                             }
+
+                            self.base = String::from(operand);
+                            log::print(&format!("now base is {}", operand), self.verbose);
+
+                            code = Code::empty(line_number, String::from(source_code));
+                            need_modify_code = vec![];
                         }
-                        match self.opcode_table.get(&mnemonic) {
-                            Some(instruction) => {
-                                (byte_code, opcode_format) = instruction;
-                                match self.code_translate(
-                                    address,
-                                    byte_code,
-                                    &mnemonic,
-                                    operand,
-                                    opcode_format,
-                                    format,
-                                ) {
-                                    Ok((obj_code, byte, ni, need_alloc, base, operand)) => {
-                                        code.obj_code.set(obj_code);
-                                        code.byte.set(byte as u16);
-                                        code.base.replace(String::from(base));
-                                        code.ni.set(ni);
-                                        code.operand.replace(String::from(operand));
-                                        move_address = byte as u16;
-                                        if need_alloc {
-                                            code.undone.set(true);
-                                        }
-                                    }
-                                    Err(e) => {
-                                        return Err(e);
-                                    }
+                        "END" => {
+                            let (operand_location, need_alloc): (u32, bool);
+                            offset = 0;
+
+                            if self.program_end {
+                                return Err(err::handler().e303());
+                            }
+                            self.program_end = true;
+
+                            if let Err(e) = self.symbol_legal(operand) {
+                                return Err(format!("operand invalid: {}", e));
+                            }
+
+                            match self.symbol_table.get_location(operand) {
+                                Some(res) => {
+                                    (operand_location, need_alloc) = (res.0, res.1);
+                                }
+                                None => {
+                                    return Err(err::handler().e202());
                                 }
                             }
-                            None => {
-                                return Err(format!("unknown instruction：{}", mnemonic).into());
+
+                            if need_alloc {
+                                return Err(err::handler().e202());
                             }
-                        }
-                    }
-                }
-            }
-        }
-
-        if user_code.len() == 3 {
-            let label = user_code[0].trim();
-            let mnemonic = user_code[1].trim();
-            let operand = user_code[2].trim();
-            let format: u8;
-            let byte_code: u8;
-            let opcode_format: u8;
-
-            match mnemonic {
-                "START" => {
-                    match u16::from_str_radix(operand, 16) {
-                        Ok(address) => {
-                            move_address = address;
-                        }
-                        Err(_) => {
-                            return Err(format!(
-                                "illegal Start address：{} must be positive Hex",
-                                operand
-                            )
-                            .into());
-                        }
-                    }
-                    self.program_start = true;
-                    self.program_name = label.to_string();
-                    if self.verbose {
-                        print!(
-                            "program name: {}, program start at 0x{:04X} ",
-                            label, move_address
-                        );
-                    }
-                    code.nocode.set(true);
-                    code.byte.set(0);
-                }
-                "RESB" => {
-                    match u16::from_str_radix(operand, 10) {
-                        Ok(get) => {
-                            move_address = get;
-                        }
-                        Err(_) => {
-                            return Err(
-                                format!("illegal：{} must be positive decimal", operand).into()
+                            code = Code::empty(line_number, String::from(source_code));
+                            need_modify_code = vec![];
+                            self.program_start_address = operand_location;
+                            log::print(
+                                &format!("program execute at 0x{:04X} ", operand_location),
+                                self.verbose,
                             );
                         }
-                    }
-                    code.nocode.set(true);
-                    code.byte.set(move_address);
-                    code.variable.set(true);
-                }
-                "RESW" => {
-                    match u16::from_str_radix(operand, 10) {
-                        Ok(get) => {
-                            move_address = get;
-                        }
-                        Err(_) => {
-                            return Err(
-                                format!("illegal：{} must be positive decimal", operand).into()
-                            );
-                        }
-                    }
-                    move_address = move_address * 3;
-                    code.nocode.set(true);
-                    code.byte.set(move_address * 3);
-                    code.variable.set(true);
-                }
-                "WORD" => {
-                    move_address = 3;
-                    let obj_code: u32;
-                    let num: i16;
+                        _ => {
+                            let original_mnemonic = mnemonic.clone();
+                            let (extension, mnemonic): (bool, &str);
 
-                    match i16::from_str_radix(operand, 10) {
-                        Ok(get) => {
-                            num = get;
-                        }
-                        Err(_) => {
-                            return Err(format!("illegal：{} must be decimal", operand).into());
-                        }
-                    }
+                            if original_mnemonic.bytes().nth(0).unwrap() == b'+' {
+                                extension = true;
+                                mnemonic = &original_mnemonic[1..];
+                            } else {
+                                extension = false;
+                                mnemonic = &original_mnemonic[..];
+                            }
 
-                    if num > 2047 || num < -2048 {
-                        return Err(format!("operand {} out of range", operand).into());
-                    }
-                    let operand_str: String = format!("{:03X}", num);
-                    let mut operand = String::new();
+                            if mnemonic == "LDB" {
+                                self.wait_for_base = true;
+                            }
 
-                    for i in operand_str.len() - 3..operand_str.len() {
-                        operand.push(operand_str.chars().nth(i).unwrap());
-                    }
-                    obj_code = u32::from_str_radix(&format!("{}", operand), 16)?;
-
-                    code.obj_code.set(obj_code);
-                    code.byte.set(3);
-                    code.variable.set(true);
-                }
-                "BYTE" => {
-                    let obj_code: u32;
-                    if operand.len() <= 3 {
-                        return Err(format!("illegal operand：{}", operand).into());
-                    }
-                    if operand.bytes().nth(1).unwrap() != b'\''
-                        || operand.bytes().nth(operand.len() - 1).unwrap() != b'\''
-                    {
-                        return Err(format!("illegal operand：{}", operand).into());
-                    }
-                    if operand.bytes().nth(0).unwrap() == b'C' {
-                        let mut tmp_obj_code = String::new();
-
-                        for i in 2..operand.len() - 1 {
-                            let tmp = format!("{:02X}", operand.chars().nth(i).unwrap() as u8);
-                            tmp_obj_code.push_str(&tmp);
-                        }
-                        if tmp_obj_code.len() > 8 {
-                            return Err("BYTE only support 32bits".into());
-                        }
-
-                        obj_code = u32::from_str_radix(&tmp_obj_code, 16)?;
-                        code.byte.set((operand.len() - 3) as u16);
-                        move_address = (operand.len() - 3) as u16;
-                    } else if operand.bytes().nth(0).unwrap() == b'X' {
-                        let mut tmp_obj_code = String::new();
-                        let len = (operand.len() - 3) as u32;
-
-                        if len % 2 != 0 {
-                            return Err(
-                                format!("illegal operand：{} need whole byte", operand).into()
-                            );
-                        }
-
-                        for i in 2..operand.len() - 1 {
-                            tmp_obj_code.push(operand.chars().nth(i).unwrap());
-                        }
-                        if tmp_obj_code.len() > 8 {
-                            return Err("BYTE only support 32bits".into());
-                        }
-
-                        obj_code = u32::from_str_radix(&tmp_obj_code, 16)?;
-                        code.byte.set((len / 2) as u16);
-                        move_address = (len / 2) as u16;
-                    } else {
-                        return Err(
-                            format!("unknown operand：{} only support X and C", operand).into()
-                        );
-                    }
-
-                    code.obj_code.set(obj_code);
-                    code.variable.set(true);
-                }
-                _ => {
-                    if !self.program_start {
-                        return Err("code need to start with a legal START mnemonic".into());
-                    }
-
-                    if mnemonic.bytes().nth(0).unwrap() == b'+' {
-                        format = 4;
-                    } else {
-                        format = 3;
-                    }
-
-                    if mnemonic.matches('+').count() > 1 {
-                        return Err(format!("invalid mnemonic {}", mnemonic).into());
-                    }
-
-                    let mnemonic = mnemonic.replace("+", "");
-
-                    match self.opcode_table.get(&mnemonic) {
-                        Some(instruction) => {
-                            (byte_code, opcode_format) = instruction;
-
+                            match self.opcode_table.get(mnemonic) {
+                                Some(instruction) => {
+                                    (opcode, instruction_format) = *instruction;
+                                }
+                                None => {
+                                    return Err(err::handler().e201(mnemonic));
+                                }
+                            }
                             match self.code_translate(
-                                address,
-                                byte_code,
-                                &mnemonic,
+                                location,
+                                mnemonic,
+                                opcode,
                                 operand,
-                                opcode_format,
-                                format,
+                                instruction_format,
+                                extension,
                             ) {
-                                Ok((obj_code, byte, ni, need_alloc, base, operand)) => {
-                                    if operand == label {
-                                        return Err(format!(
-                                            "invalid operand and label cannot be the same"
-                                        )
-                                        .into());
-                                    }
-                                    code.obj_code.set(obj_code);
-                                    code.byte.set(byte as u16);
-                                    code.base.replace(String::from(base));
-                                    code.operand.replace(String::from(operand));
-                                    code.ni.set(ni);
-                                    move_address = byte as u16;
-                                    if need_alloc {
-                                        code.undone.set(true);
-                                    }
+                                Ok((ni, obj_code, finial_operand, undone, byte)) => {
+                                    offset = byte as u32;
+                                    code = Code::new(
+                                        line_number,
+                                        source_code,
+                                        location,
+                                        ni,
+                                        self.base.clone(),
+                                        finial_operand,
+                                        obj_code,
+                                        offset,
+                                        false,
+                                        false,
+                                        undone,
+                                    );
+                                    need_modify_code = vec![];
                                 }
                                 Err(e) => {
                                     return Err(e);
                                 }
                             }
                         }
-                        None => {
-                            return Err(format!("unknown instruction：{}", mnemonic).into());
-                        }
                     }
                 }
             }
+            3 => {
+                let label = user_code[0].trim();
+                let mnemonic = user_code[1].trim();
+                let operand = user_code[2].trim();
+                let (opcode, instruction_format): (u8, u8);
 
-            self.symbol_legal(label)?;
-
-            match self.symbol_table.insert(label, address) {
-                Ok(wait_byte_code) => {
-                    need_modify_obj_code = wait_byte_code;
+                if self.wait_for_base && mnemonic != "BASE" {
+                    return Err(err::handler().e303());
                 }
-                Err(e) => {
-                    return Err(e);
+
+                match mnemonic {
+                    "START" => {
+                        match u32::from_str_radix(operand, 16) {
+                            Ok(location) => {
+                                offset = location;
+                            }
+                            Err(_) => {
+                                return Err(err::handler().e203(operand));
+                            }
+                        }
+                        self.program_start = true;
+                        if label.len() > 6 {
+                            return Err(err::handler().e305(label));
+                        }
+                        self.program_name = String::from(label);
+                        log::print(
+                            &format!(
+                                "program name: {}, program start at 0x{:04X} ",
+                                label, offset
+                            ),
+                            self.verbose,
+                        );
+                        code = Code::empty(line_number, String::from(source_code));
+                    }
+                    "RESB" => {
+                        match u32::from_str_radix(operand, 10) {
+                            Ok(get) => {
+                                offset = get;
+                            }
+                            Err(_) => {
+                                return Err(err::handler().e204());
+                            }
+                        }
+                        if offset >= SizeLimit::Location as u32 {
+                            return Err(err::handler().e204());
+                        }
+                        code = Code::new(
+                            line_number,
+                            source_code,
+                            location,
+                            0,
+                            self.base.clone(),
+                            String::from(operand),
+                            0,
+                            offset,
+                            true,
+                            true,
+                            false,
+                        );
+                    }
+                    "RESW" => {
+                        let size: u32;
+                        match u32::from_str_radix(operand, 10) {
+                            Ok(get) => {
+                                size = get;
+                            }
+                            Err(_) => {
+                                return Err(err::handler().e204());
+                            }
+                        }
+                        match size.checked_mul(3) {
+                            Some(get) => {
+                                offset = get;
+                            }
+                            None => {
+                                return Err(err::handler().e204());
+                            }
+                        }
+                        if offset >= SizeLimit::Location as u32 {
+                            return Err(err::handler().e204());
+                        }
+                        code = Code::new(
+                            line_number,
+                            source_code,
+                            location,
+                            0,
+                            self.base.clone(),
+                            String::from(operand),
+                            0,
+                            offset,
+                            true,
+                            true,
+                            false,
+                        );
+                    }
+                    "WORD" => {
+                        offset = 3;
+                        let num: i16;
+
+                        match i16::from_str_radix(operand, 10) {
+                            Ok(get) => {
+                                num = get;
+                            }
+                            Err(_) => {
+                                return Err(err::handler().e205());
+                            }
+                        }
+                        if num > 2047 || num < -2048 {
+                            return Err(err::handler().e205());
+                        }
+
+                        let operand_str: String = format!("{:03X}", num);
+                        let mut operand = String::new();
+
+                        for i in operand_str.len() - 3..operand_str.len() {
+                            operand.push(operand_str.chars().nth(i).unwrap());
+                        }
+                        let obj_code = u64::from_str_radix(&format!("{}", operand), 16).unwrap();
+
+                        code = Code::new(
+                            line_number,
+                            source_code,
+                            location,
+                            0,
+                            self.base.clone(),
+                            String::from(operand),
+                            obj_code,
+                            offset,
+                            true,
+                            false,
+                            false,
+                        );
+                    }
+                    "BYTE" => {
+                        let mut tmp_obj_code = String::new();
+
+                        if operand.len() <= 3 {
+                            return Err(err::handler().e206());
+                        }
+                        let quote_s = operand.bytes().nth(1).unwrap();
+                        let quote_e = operand.bytes().nth(operand.len() - 1).unwrap();
+                        if quote_s != b'\'' || quote_e != b'\'' {
+                            return Err(err::handler().e206());
+                        }
+
+                        match operand.bytes().nth(0).unwrap() {
+                            b'C' => {
+                                for i in 2..operand.len() - 1 {
+                                    let letter = operand.chars().nth(i).unwrap();
+
+                                    if !letter.is_ascii() {
+                                        return Err(err::handler().e207());
+                                    }
+
+                                    tmp_obj_code.push_str(&format!("{:02X}", letter as u8));
+                                }
+                            }
+                            b'X' => {
+                                if (operand.len() - 3) % 2 != 0 {
+                                    return Err(err::handler().e209());
+                                }
+                                for i in 2..operand.len() - 1 {
+                                    tmp_obj_code.push(operand.chars().nth(i).unwrap());
+                                }
+                            }
+                            _ => {
+                                return Err(err::handler().e206());
+                            }
+                        }
+
+                        if tmp_obj_code.len() > 14 {
+                            return Err(err::handler().e208());
+                        }
+
+                        offset = (tmp_obj_code.len() / 2) as u32;
+                        code = Code::new(
+                            line_number,
+                            source_code,
+                            location,
+                            0,
+                            self.base.clone(),
+                            String::from(operand),
+                            u64::from_str_radix(&tmp_obj_code, 16).unwrap(),
+                            offset,
+                            true,
+                            false,
+                            false,
+                        );
+                    }
+                    _ => {
+                        if !self.program_start {
+                            return Err(err::handler().e301());
+                        }
+
+                        let original_mnemonic = mnemonic.clone();
+                        let (extension, mnemonic): (bool, &str);
+
+                        if original_mnemonic.bytes().nth(0).unwrap() == b'+' {
+                            extension = true;
+                            mnemonic = &original_mnemonic[1..];
+                        } else {
+                            extension = false;
+                            mnemonic = &original_mnemonic[..];
+                        }
+
+                        if mnemonic == "LDB" {
+                            self.wait_for_base = true;
+                        }
+
+                        match self.opcode_table.get(mnemonic) {
+                            Some(instruction) => {
+                                (opcode, instruction_format) = *instruction;
+                            }
+                            None => {
+                                return Err(err::handler().e201(mnemonic));
+                            }
+                        }
+                        match self.code_translate(
+                            location,
+                            mnemonic,
+                            opcode,
+                            operand,
+                            instruction_format,
+                            extension,
+                        ) {
+                            Ok((ni, obj_code, finial_operand, undone, byte)) => {
+                                offset = byte as u32;
+                                code = Code::new(
+                                    line_number,
+                                    source_code,
+                                    location,
+                                    ni,
+                                    self.base.clone(),
+                                    finial_operand,
+                                    obj_code,
+                                    offset,
+                                    false,
+                                    false,
+                                    undone,
+                                );
+                            }
+                            Err(e) => {
+                                return Err(e);
+                            }
+                        }
+                    }
+                }
+
+                if let Err(e) = self.symbol_legal(label) {
+                    return Err(format!("label invalid: {}", e));
+                }
+
+                match self.symbol_table.insert(label, location) {
+                    Ok(waiting_list) => {
+                        need_modify_code = waiting_list;
+                    }
+                    Err(e) => {
+                        return Err(e);
+                    }
                 }
             }
-        }
-
-        if user_code.len() > 3 {
-            return Err("invalid user code".into());
-        }
-
-        if move_address != 0 {
-            code.address.set(address);
-            if self.verbose {
-                print!("address: 0x{:04X} ", address);
+            _ => {
+                return Err(err::handler().e000());
             }
         }
 
-        if !code.nocode.get() {
-            let width = (code.byte.get() * 2) as usize;
-            if self.verbose {
-                print!(
-                    "byte code: 0x{:0width$X} ",
-                    code.obj_code.get(),
-                    width = width
-                );
+        if !code.no_obj_code {
+            let width = (code.byte * 2) as usize;
+            log::print(
+                &format!("byte code: 0x{:0width$X} ", code.obj_code, width = width),
+                self.verbose,
+            );
+        }
+        log::println("", self.verbose);
+
+        match self.program_length.checked_add(offset) {
+            Some(new_length) => {
+                self.program_length = new_length;
+            }
+            None => {
+                return Err(err::handler().e306());
             }
         }
-        if self.verbose {
-            println!();
+        if self.program_length > SizeLimit::Location as u32 {
+            return Err(err::handler().e306());
         }
-        self.program_length
-            .set(self.program_length.get() + move_address);
 
-        Ok((code, move_address, need_modify_obj_code))
+        Ok((code, offset, need_modify_code))
     }
 
-    fn symbol_legal(&self, label: &str) -> Result<(), Box<dyn Error>> {
-        if self.opcode_table.get(label) != None {
-            return Err(format!("{} is a instruction", label).into());
-        }
+    pub fn fill_operand(
+        &mut self,
+        location: u32,
+        pc: i32,
+        base: &str,
+        operand_location: u32,
+    ) -> Result<(i32, bool, u8), String> {
+        let operand_location = operand_location as i32;
+        let operand_obj_code = operand_location - pc;
 
-        if self.registers.get(label) != None {
-            return Err(format!("{} is a register", label).into());
-        }
+        if operand_obj_code < -2048 || operand_obj_code > 2047 {
+            if base == "" {
+                return Err(err::handler().e307());
+            }
+            let (base_address, need_alloc) =
+                self.symbol_table.get_location_or_create(base, location)?;
+            let base_address = base_address as i32;
+            if need_alloc {
+                return Ok((0, true, 0));
+            }
 
-        if self.reserve.get(label) != None {
-            return Err(format!("{} is a reserve word", label).into());
-        }
+            let disp = operand_location - base_address;
+            if disp > 4095 || disp < 0 {
+                return Err(err::handler().e308(base));
+            }
 
-        if !self.symbol_table.is_legal(label){
-            return Err(format!("{} is not legal ", label).into());
+            return Ok((disp, need_alloc, 4));
         }
-
-        return Ok(());
+        return Ok((operand_obj_code, false, 2));
     }
 
     fn code_translate(
         &mut self,
-        address: u16,
-        byte_code: u8,
+        location: u32,
         mnemonic: &str,
-        operand: &str,
-        opcode_format: u8,
-        format: u8,
-    ) -> Result<(u32, u8, u32, bool, String, String), Box<dyn Error>> {
-        // return value
-        let obj_code: u32;
-        let byte: u8;
-        let mut need_alloc = false;
-        let finial_operand: String;
-        let ni: u32;
+        opcode: u8,
+        original_operand: &str,
+        instruction_format: u8,
+        extension: bool,
+    ) -> Result<(u8, u64, String, bool, u8), String> {
+        let (ni, obj_code, finial_operand, undone, byte): (u8, u64, String, bool, u8);
 
-        match opcode_format {
+        match instruction_format {
             1 => {
-                obj_code = 0 << 8 + byte_code as u32;
-                byte = opcode_format;
-                finial_operand = String::new();
+                if !original_operand.eq("") {
+                    return Err(err::handler().e210(mnemonic));
+                }
+
                 ni = 0;
+                obj_code = 0 << 8 + opcode as u32;
+                finial_operand = String::new();
+                undone = false;
+                byte = instruction_format;
             }
             2 => {
-                let operand: Vec<&str> = self.comma_separator.split(&operand).into_iter().collect();
-                if operand.len() == 1 {
-                    if let Some(r1) = self.registers.get(operand[0]) {
-                        obj_code = u32::from_str_radix(
-                            &format!("{:02X}{:01X}{:01X}", byte_code, r1, 0),
-                            16,
-                        )?;
-                    } else {
-                        return Err(format!("invalid register：{}", operand[0]).into());
-                    }
-                } else if operand.len() == 2 {
-                    if let Some(r1) = self.registers.get(operand[0]) {
-                        if let Some(r2) = self.registers.get(operand[1]) {
-                            obj_code = u32::from_str_radix(
-                                &format!("{:02X}{:01X}{:01X}", byte_code, r1, r2),
-                                16,
-                            )?;
-                        } else {
-                            return Err(format!("invalid register：{}", operand[1]).into());
-                        }
-                    } else {
-                        return Err(format!("invalid register：{}", operand[0]).into());
-                    }
-                } else {
-                    return Err(format!(
-                        "invalid operand: {} can only contain one comma",
-                        mnemonic
-                    )
-                    .into());
+                if original_operand.eq("") {
+                    return Err(err::handler().e211(mnemonic));
                 }
-                byte = opcode_format;
-                finial_operand = String::new();
                 ni = 0;
+                finial_operand = String::from(original_operand);
+                undone = false;
+                byte = instruction_format;
+
+                let operand: Vec<&str> = self.comma_separator.split(&original_operand).collect();
+
+                match operand.len() {
+                    1 => {
+                        if let Some(r1) = self.registers.get(operand[0]) {
+                            obj_code = u64::from_str_radix(
+                                &format!("{:02X}{:01X}{:01X}", opcode, r1, 0),
+                                16,
+                            )
+                            .unwrap();
+                        } else {
+                            return Err(err::handler().e212(operand[0]));
+                        }
+                    }
+                    2 => {
+                        if operand[0] == "" || operand[1] == "" {
+                            return Err(err::handler().e213());
+                        }
+                        if let Some(r1) = self.registers.get(operand[0]) {
+                            if let Some(r2) = self.registers.get(operand[1]) {
+                                obj_code = u64::from_str_radix(
+                                    &format!("{:02X}{:01X}{:01X}", opcode, r1, r2),
+                                    16,
+                                )
+                                .unwrap();
+                            } else {
+                                return Err(err::handler().e212(operand[1]));
+                            }
+                        } else {
+                            return Err(err::handler().e212(operand[0]));
+                        }
+                    }
+                    _ => {
+                        return Err(err::handler().e213());
+                    }
+                }
             }
             34 => {
                 if mnemonic == "RSUB" {
-                    if operand.len() > 0 {
-                        return Err(
-                            format!("instruction：{} can not have operand", mnemonic).into()
-                        );
+                    if original_operand != "" {
+                        return Err(err::handler().e210(mnemonic));
                     }
-                    obj_code = (byte_code as u32 + Parser::SIMPLE_ADDRESS) << 2 * 8;
+
+                    ni = AddressingMode::Simple as u8;
+                    obj_code = (opcode as u64 + AddressingMode::Simple as u64) << 2 * 8;
+                    finial_operand = String::from(original_operand);
+                    undone = false;
                     byte = 3;
-                    need_alloc = false;
-                    finial_operand = String::new();
-                    ni = 0;
                 } else {
-                    let original_operand = operand;
                     let operand: String;
                     let mut xbpe: u8 = 0x0;
-                    let operand_byte_code: u16;
+                    let operand_location: u32;
 
                     if original_operand.bytes().nth(0).unwrap() == b'@' {
-                        ni = Parser::INDIRECT_ADDRESS;
+                        ni = AddressingMode::Indirect as u8;
                         operand = original_operand.replace("@", "");
                     } else if original_operand.bytes().nth(0).unwrap() == b'#' {
-                        ni = Parser::IMMEDIATE_ADDRESS;
+                        ni = AddressingMode::Immediate as u8;
                         operand = original_operand.replace("#", "");
                     } else {
-                        ni = Parser::SIMPLE_ADDRESS;
+                        ni = AddressingMode::Simple as u8;
                         operand = String::from(original_operand);
                     }
-
-                    let original_operand = operand.clone();
-                    let operand: Vec<&str> = self
-                        .comma_separator
-                        .split(operand.as_str())
-                        .into_iter()
-                        .collect();
+                    let operand: Vec<&str> = self.comma_separator.split(operand.as_str()).collect();
 
                     if operand.len() == 2 {
                         if operand[1] == "X" {
                             xbpe += 8;
                         } else {
-                            return Err(format!(
-                                "invalid Register：{} only support X register",
-                                original_operand
-                            )
-                            .into());
+                            return Err(err::handler().e214());
                         }
                     }
                     if operand.len() > 2 {
-                        return Err(format!(
-                            "invalid operand: {} can only contain one comma",
-                            original_operand
-                        )
-                        .into());
+                        return Err(err::handler().e214());
                     }
 
                     finial_operand = String::from(operand[0]);
-
-                    let num: i32;
-                    let is_digit: bool;
-
-                    if ni == Parser::IMMEDIATE_ADDRESS {
-                        match i32::from_str_radix(operand[0], 10) {
-                            Ok(n) => {
-                                num = n;
-                                is_digit = true;
-                            }
-                            Err(_) => {
-                                num = -1;
-                                is_digit = false;
-                            }
-                        }
+                    if extension {
+                        xbpe += 1;
+                        byte = 4;
                     } else {
-                        num = -1;
-                        is_digit = false;
+                        byte = 3;
                     }
 
-                    if ni == Parser::IMMEDIATE_ADDRESS && is_digit {
-                        if format == 3 {
-                            let operand = num;
-                            obj_code = self.fill_obj_code(byte_code, ni, xbpe, operand, 3)?;
-                        } else {
-                            let operand = num;
-                            xbpe += 1;
-                            obj_code = self.fill_obj_code(byte_code, ni, xbpe, operand, 5)?;
+                    let mut num: i32 = -1;
+                    let mut is_digit = false;
+                    if ni == AddressingMode::Immediate as u8 {
+                        if let Ok(n) = i32::from_str_radix(operand[0], 10) {
+                            num = n;
+                            is_digit = true;
                         }
+                    }
+
+                    if ni == AddressingMode::Immediate as u8 && is_digit {
+                        let operand = num;
+                        obj_code = self.fill_obj_code(opcode, ni, xbpe, operand, extension);
+                        undone = false;
                     } else {
-                        self.symbol_legal(operand[0])?;
-                        (operand_byte_code, need_alloc) =
-                            self.symbol_table.get(operand[0], address)?;
-                        if format == 4 {
-                            xbpe += 1;
+                        if let Err(e) = self.symbol_legal(operand[0]) {
+                            return Err(format!("operand invalid: {}", e));
                         }
 
-                        if need_alloc {
-                            if format == 3 {
-                                let operand = operand_byte_code as i32;
-                                obj_code = self.fill_obj_code(byte_code, ni, xbpe, operand, 3)?;
-                            } else {
-                                let operand = operand_byte_code as i32;
-                                obj_code = self.fill_obj_code(byte_code, ni, xbpe, operand, 5)?;
-                            }
-                        } else if format == 3 {
-                            let pc: i16 = (address + (format as u16)) as i16;
-                            let operand: i32;
-                            let move_xbpe: u8;
-                            (operand, need_alloc, move_xbpe) =
-                                self.fill_operand(address, pc, operand_byte_code)?;
+                        let mut need_alloc: bool;
+                        (operand_location, need_alloc) = self
+                            .symbol_table
+                            .get_location_or_create(operand[0], location)?;
+
+                        if need_alloc || extension {
+                            let operand_obj_code = operand_location as i32;
                             obj_code =
-                                self.fill_obj_code(byte_code, ni, xbpe + move_xbpe, operand, 3)?;
+                                self.fill_obj_code(opcode, ni, xbpe, operand_obj_code, extension);
                         } else {
-                            let operand = operand_byte_code as i32;
-                            obj_code = self.fill_obj_code(byte_code, ni, xbpe, operand, 5)?;
+                            let pc: i32;
+                            let (operand_obj_code, move_xbpe): (i32, u8);
+                            match location.checked_add(byte as u32) {
+                                Some(new_length) => {
+                                    pc = new_length as i32;
+                                }
+                                None => {
+                                    return Err(err::handler().e306());
+                                }
+                            }
+
+                            (operand_obj_code, need_alloc, move_xbpe) = self.fill_operand(
+                                location,
+                                pc,
+                                self.base.clone().as_ref(),
+                                operand_location,
+                            )?;
+                            obj_code = self.fill_obj_code(
+                                opcode,
+                                ni,
+                                xbpe + move_xbpe,
+                                operand_obj_code,
+                                extension,
+                            );
                         }
+
+                        undone = need_alloc;
                     }
-                    byte = format;
                 }
             }
             _ => {
-                return Err(format!("instruction：{} format error", mnemonic).into());
+                return Err(err::handler().e999(&format!(
+                    "instruction_format error: found {} is {}",
+                    mnemonic, instruction_format
+                )));
             }
         }
 
-        if need_alloc && self.verbose {
-            print!("obj code not done\n-> ");
-        }
-
-        Ok((
-            obj_code,
-            byte,
-            ni,
-            need_alloc,
-            self.base.borrow().clone(),
-            finial_operand,
-        ))
+        Ok((ni, obj_code, finial_operand, undone, byte))
     }
 
-    fn fill_obj_code(
-        &mut self,
-        byte_code: u8,
-        ni: u32,
-        xbpe: u8,
-        operand: i32,
-        width: usize,
-    ) -> Result<u32, Box<dyn Error>> {
-        let byte_code = (byte_code as u32) + ni;
+    fn symbol_legal(&self, label: &str) -> Result<(), String> {
+        if !self.symbol_table.is_legal(label) {
+            return Err(err::handler().e101(label));
+        }
+
+        if self.opcode_table.contains_key(label) {
+            return Err(err::handler().e103(label));
+        }
+
+        if self.registers.contains_key(label) {
+            return Err(err::handler().e104(label));
+        }
+
+        if self.reserve.contains_key(label) {
+            return Err(err::handler().e105(label));
+        }
+
+        return Ok(());
+    }
+
+    fn fill_obj_code(&self, opcode: u8, ni: u8, xbpe: u8, operand: i32, extension: bool) -> u64 {
+        let width: usize;
+
+        if extension {
+            width = 5
+        } else {
+            width = 3
+        }
+
+        let byte_code = opcode + ni;
         let operand_str: String = format!("{:0width$X}", operand, width = width);
         let mut operand = String::new();
 
@@ -850,79 +1039,7 @@ impl Parser {
             operand.push(operand_str.chars().nth(i).unwrap());
         }
 
-        let obj_code =
-            u32::from_str_radix(&format!("{:02X}{:01X}{}", byte_code, xbpe, operand), 16)?;
-        return Ok(obj_code);
-    }
-
-    pub fn fill_operand_base(
-        &mut self,
-        address: u16,
-        pc: i16,
-        base: &str,
-        operand: u16,
-    ) -> Result<(i32, bool, u8), Box<dyn Error>> {
-        // FIXME:check overflow
-        let operand_byte_code = (operand as i16) - pc;
-        if self.verbose {
-            println!("address 0x{:04X} -> {:X} ", address, operand_byte_code);
-        }
-        if operand_byte_code < -2048 || operand_byte_code > 2047 {
-            if base == "" {
-                return Err(format!("re-alloc: need base, but don't have").into());
-            }
-            let (base_address, need_alloc) = self.symbol_table.get(base, address)?;
-            let base_address = base_address as i32;
-            if need_alloc {
-                return Ok((base_address, true, 0));
-            } else {
-                let disp = (operand as i32) - base_address;
-                if disp > 4095 || disp < 0 {
-                    return Err(format!(
-                        "address 0x{:04X} -> use base {} also out of range",
-                        address, base
-                    )
-                    .into());
-                }
-                return Ok((disp, need_alloc, 4));
-            }
-        } else {
-            return Ok((operand_byte_code as i32, false, 2));
-        }
-    }
-
-    fn fill_operand(
-        &mut self,
-        address: u16,
-        pc: i16,
-        operand: u16,
-    ) -> Result<(i32, bool, u8), Box<dyn Error>> {
-        // FIXME:check overflow
-        let operand_byte_code = (operand as i16) - pc;
-        if self.verbose {
-            println!("address 0x{:04X} -> {:X} ", address, operand_byte_code);
-        }
-        if operand_byte_code < -2048 || operand_byte_code > 2047 {
-            if self.base.borrow().to_string() == "" {
-                return Err(format!("need base, but don't have").into());
-            }
-            let (base_address, need_alloc) = self.symbol_table.get(&self.base.borrow(), address)?;
-            let base_address = base_address as i32;
-            if need_alloc {
-                return Ok((base_address, true, 0));
-            } else {
-                let base = (operand as i32) - base_address;
-                if base > 4095 || base < 0 {
-                    return Err(format!("use base {} also out of range", self.base.borrow()).into());
-                }
-                return Ok((base, need_alloc, 4));
-            }
-        } else {
-            return Ok((operand_byte_code as i32, false, 2));
-        }
-    }
-
-    pub fn symbols_inter(&self) {
-        self.symbol_table.inter();
+        return u64::from_str_radix(&format!("{:02X}{:01X}{}", byte_code, xbpe, operand), 16)
+            .unwrap();
     }
 }

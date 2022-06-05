@@ -1,12 +1,14 @@
 use regex::Regex;
 use std::collections::HashMap;
-use std::error::Error;
 use std::fs;
 use std::io::{self, Write};
+use std::path::Path;
 
+mod log;
 mod parser;
 use parser::Code;
 use parser::Parser;
+mod err;
 
 fn help_message(bin_path: &str) -> String {
     let msg = format!("Usage: {} <code path>", bin_path);
@@ -18,17 +20,18 @@ fn help_message(bin_path: &str) -> String {
 
 pub struct Target {
     code_file_path: String,
-    execute_file: String,
-    verbose: bool,
+    execute_file_path: String,
+    verbose: bool, // verbose mode -> debug mode
 }
 
 impl Target {
-    pub fn new(args: &[String]) -> Result<Target, Box<dyn Error>> {
+    pub fn new(args: &[String]) -> Result<Target, String> {
         if args.len() < 2 {
             return Err(help_message(args[0].as_str()).into());
         }
         let mut verbose = false;
-        let mut execute_file = String::from("a.out");
+        let mut execute_file_path = String::from("a.out");
+        let code_file_path = args[args.len() - 1].clone();
 
         for i in 1..args.len() - 1 {
             if args[i] == "-v" {
@@ -39,252 +42,263 @@ impl Target {
                 }
                 let re = Regex::new(r"^[a-zA-Z0-9_]+$").unwrap();
                 if !re.is_match(&args[i + 1]) {
-                    return Err(format!("invalid file name: {}", args[i + 1]).into());
+                    return Err(err::handler().e001());
                 }
-                execute_file = args[i + 1].clone();
-                execute_file.push_str(".out")
+                execute_file_path = args[i + 1].clone();
+                execute_file_path.push_str(".out")
             }
         }
-
-        let code_file_path = args[args.len() - 1].clone();
 
         Ok(Target {
             code_file_path,
-            execute_file: String::from(execute_file),
+            execute_file_path,
             verbose,
         })
     }
-}
 
-pub fn run(target: &Target) -> Result<(), Box<dyn Error>> {
-    let user_code = fs::read_to_string(target.code_file_path.clone())?;
-    let re = Regex::new(r"[ \t]*,[ \t]*")?;
-    let c_re = Regex::new(r"[ \t]+C[ \t]+")?;
-    let x_re = Regex::new(r"[ \t]+X[ \t]+")?;
+    pub fn run(&self) -> Result<(), String> {
+        let code_file_path = Path::new(self.code_file_path.as_str());
+        let user_code: String;
+        let comma_regex = Regex::new(r"[ \t]*,[ \t]*").unwrap();
+        let c_re = Regex::new(r"[ \t]+C[ \t]*'").unwrap();
+        let x_re = Regex::new(r"[ \t]+X[ \t]*'").unwrap();
 
-    let mut parser = Parser::new(target.verbose)?;
-    let mut line_number: u32 = 1;
-    let mut address: u16 = 0x0;
-    let mut byte_code_list: Vec<Code> = Vec::new();
-    let mut address_map: HashMap<u16, usize> = HashMap::new();
-    let mut have_error = false;
-
-    if target.verbose {
-        println!("{}", "One pass:");
-    }
-
-    for code in user_code.lines() {
-        let original_code = code;
-        let code = re.replace_all(code, ",").clone();
-        let code = code.trim();
-        let code = c_re.replace_all(code, " C").clone();
-        let code = code.trim();
-        let code = x_re.replace_all(code, " X").clone();
-
-        match parser.translate(address, code.clone().trim(), line_number, original_code) {
-            Ok((code, move_address, need_modify_obj_code)) => {
-                if parser.program_end && !code.nocode.get() {
-                    if !target.verbose {
-                        print!("{}:\t{}\n-> ", line_number, original_code);
-                    }
-                    println!("{}", "Error: have code after END");
-                    break;
-                }
-                byte_code_list.push(code);
-                address_map.insert(address, byte_code_list.len() - 1);
-
-                for i in 0..need_modify_obj_code.len() {
-                    match address_map.get(&need_modify_obj_code[i]) {
-                        Some(line_num) => {
-                            let code = &byte_code_list[*line_num];
-                            if let Err(e) = code.re_alloc(&mut parser) {
-                                if !target.verbose {
-                                    print!("{}:\t{}\n-> ", line_number, original_code);
-                                }
-                                println!("{}", e);
-                            }
-                        }
-                        None => {
-                            return Err(format!(
-                                "assembler error: line {}: address {} not found",
-                                line_number, need_modify_obj_code[i]
-                            )
-                            .into());
-                        }
-                    }
-                }
-                if target.verbose {
-                    println!("move address {} ", move_address);
-                }
-                address += move_address;
+        match fs::read_to_string(code_file_path) {
+            Ok(code) => user_code = code,
+            Err(_) => {
+                return Err(err::handler().e002());
             }
-            Err(e) => {
-                if e.to_string() == "code need to start with a legal START mnemonic" {
-                    io::stdout().flush().unwrap();
-                    return Err(e.into());
+        }
+
+        println!("
+       _                      _   _       _   _       _
+__   _(_)_ __   ___ ___ _ __ | |_(_)_ __ | |_| |_ ___| |__
+\\ \\ / / | '_ \\ / __/ _ \\ '_ \\| __| | '_ \\| __| __/ __| '_ \\
+ \\ V /| | | | | (_|  __/ | | | |_| | | | | |_| |_\\__ \\ | | |
+  \\_/ |_|_| |_|\\___\\___|_| |_|\\__|_|_| |_|\\__|\\__|___/_| |_|
+
+                              _     _
+  __ _ ___ ___  ___ _ __ ___ | |__ | | ___ _ __
+ / _` / __/ __|/ _ \\ '_ ` _ \\| '_ \\| |/ _ \\ '__|
+| (_| \\__ \\__ \\  __/ | | | | | |_) | |  __/ |
+ \\__,_|___/___/\\___|_| |_| |_|_.__/|_|\\___|_|
+    ");
+
+        let mut parser = Parser::new(self.verbose);
+
+        // user code line number
+        let mut line_number: u32 = 1;
+        // memory location
+        let mut mem_loc: u32 = 0;
+        let mut obj_code_list: Vec<Code> = Vec::new();
+        let mut address_map: HashMap<u32, usize> = HashMap::new();
+        let mut have_error = false;
+
+        log::println("One pass:", self.verbose);
+
+        for code in user_code.lines() {
+            let source_code = code;
+            let code = code.trim();
+            let code = comma_regex.replace_all(code, ",");
+            let code = c_re.replace_all(code.as_ref(), " C'");
+            let code = x_re.replace_all(code.as_ref(), " X'");
+            let code = code.as_ref();
+
+            match parser.translate(line_number, mem_loc, code, source_code) {
+                Ok((code, offset, need_modify_code)) => {
+                    if parser.program_end && !code.no_obj_code {
+                        log::println(
+                            &format!("{}:\t{}\n-> ", line_number, source_code),
+                            !self.verbose,
+                        );
+                        log::println(&err::handler().e304(), true);
+                        break;
+                    }
+                    obj_code_list.push(code);
+                    address_map.insert(mem_loc, obj_code_list.len() - 1);
+
+                    for i in 0..need_modify_code.len() {
+                        let code = &mut obj_code_list[address_map[&need_modify_code[i]]];
+                        if let Err(e) = code.re_alloc(&mut parser) {
+                            log::println(
+                                &format!("{}:\t{}\n-> ", line_number, source_code),
+                                !self.verbose,
+                            );
+                            log::println(&e, true);
+                        }
+                    }
+
+                    log::println(&format!("move address {} ", offset), self.verbose);
+
+                    mem_loc += offset;
+                }
+                Err(e) => {
+                    if e == err::handler().e301() {
+                        io::stdout().flush().unwrap();
+                        return Err(e.into());
+                    }
+                    have_error = true;
+                    log::print(
+                        &format!("{}:\t{}\n-> ", line_number, source_code),
+                        !self.verbose,
+                    );
+                    log::println(&e, true);
+                }
+            }
+            line_number += 1;
+        }
+
+        if !parser.program_end {
+            return Err(err::handler().e304());
+        }
+
+        if self.verbose {
+            println!("\n\nSymbolTable:");
+            parser.symbols_inter();
+            println!("\n\nObjectCode:");
+            for i in 0..obj_code_list.len() {
+                let code = &obj_code_list[i];
+                if !code.no_obj_code {
+                    let width = (code.byte * 2) as usize;
+                    println!(
+                        "{}:{} \n->0x{:04X} {:0width$X}",
+                        code.line_number,
+                        code.source_code,
+                        code.location,
+                        code.obj_code,
+                        width = width,
+                    );
+                }
+            }
+        }
+
+        // print binary code
+        let mut start_address: u32;
+        let program_start: u32;
+        let program_name = parser.program_name.clone();
+        match parser.get_symbol_location(program_name.as_str()) {
+            Some((s, need_alloc)) => {
+                if need_alloc {
+                    return Err(err::handler().e309());
+                }
+                start_address = s;
+                program_start = s;
+            }
+            None => {
+                return Err(err::handler().e309());
+            }
+        }
+        let mut contents = format!(
+            "H^{:>6}{:06X}{:06X}\n",
+            program_name,
+            start_address,
+            parser.program_length,
+        );
+
+        let mut now_bit = 4096;
+        let mut relocation_bit: u16 = 0;
+        let mut obj_code = String::new();
+        let mut count = 0;
+
+        for i in 0..obj_code_list.len() {
+            let code = &obj_code_list[i];
+            let width = (code.byte * 2) as usize;
+            if code.undone {
+                if code.base != "" {
+                    print!("{}:\t{}\n-> ", code.line_number, code.source_code);
+                    println!(
+                        "operand {} or base {} not found",
+                        code.operand,
+                        code.base
+                    );
+                } else {
+                    print!("{}:\t{}\n-> ", code.line_number, code.source_code);
+                    println!("operand {} not found", code.operand);
                 }
                 have_error = true;
-                if !target.verbose {
-                    print!("{}:\t{}\n-> ", line_number, original_code);
+            }
+
+            if (code.no_obj_code && width > 0) || (obj_code.len() - count) + width >= 60 {
+                if obj_code.len() > 0 {
+                    if program_start == 0x0 {
+                        contents.push_str(&format!(
+                            "T^{:06X}^{:02X}^{:03X}^{}\n",
+                            start_address,
+                            (obj_code.len() - count) / 2,
+                            relocation_bit,
+                            obj_code
+                        ));
+                    } else {
+                        contents.push_str(&format!(
+                            "T^{:06X}^{:03X}^{}\n",
+                            start_address,
+                            (obj_code.len() - count) / 2,
+                            obj_code
+                        ));
+                    }
                 }
-                println!("{}", e);
+                now_bit = 4096;
+                relocation_bit = 0;
+                start_address = code.location;
+                obj_code = String::new();
+                count = 0;
+            }
+
+            // RESW RESB
+            if code.no_obj_code && width > 0 {
+                let mut now = i + 1;
+
+                while now < obj_code_list.len() {
+                    let code = &obj_code_list[now];
+                    if code.no_obj_code {
+                        now = now + 1;
+                    } else {
+                        break;
+                    }
+                }
+                if now < obj_code_list.len() {
+                    start_address = (&obj_code_list[now]).location;
+                }
+                continue;
+            }
+
+            if !code.no_obj_code {
+                if code.byte == 4 && !code.variable && code.ni != 1 {
+                    relocation_bit += now_bit;
+                }
+                count += 1;
+                obj_code.push_str(&format!("{:0width$X}^", code.obj_code, width = width));
+                now_bit /= 2;
             }
         }
-        line_number = line_number + 1;
-    }
 
-    if !parser.program_end {
-        return Err("code need to have END mnemonic".into());
-    }
-
-    if target.verbose {
-        println!("\n\nSymbolTable:");
-        parser.symbols_inter();
-        println!("\n\nObjectCode:");
-        for i in 0..byte_code_list.len() {
-            let code = &byte_code_list[i];
-            if !code.nocode.get() || true {
-                let width = (code.byte.get() * 2) as usize;
-                println!(
-                    "{}:{} \n->0x{:04X} {:0width$X}",
-                    code.line_number,
-                    code.code,
-                    code.address.get(),
-                    code.obj_code.get(),
-                    width = width,
-                );
-            }
-        }
-    }
-
-    // print binary code
-    let mut start_address:u16;
-    let program_start: u16;
-    let program_name = parser.program_name.clone();
-    match parser.symbol(program_name.as_str()) {
-        Ok((s,need_alloc)) =>{
-            start_address = s;
-            program_start = s;
-            if need_alloc {
-                return Err("program name is not defined".into());
-            }
-        },
-        Err(e) => {
-            return Err(e.into());
-        }
-    }
-    let mut contents = format!(
-        "H^{:>6}{:06X}{:06X}\n",
-        parser.program_name,
-        start_address,
-        parser.program_length.get(),
-    );
-
-    let mut now_bit = 4096;
-    let mut relocation_bit: u16 = 0;
-    let mut obj_code = String::new();
-    let mut count = 0;
-
-    for i in 0..byte_code_list.len() {
-        let code = &byte_code_list[i];
-        let width = (code.byte.get() * 2) as usize;
-        if code.undone.get() {
-            if code.base.borrow().to_string() != "" {
-                print!("{}:\t{}\n-> ", code.line_number, code.code);
-                println!(
-                    "operand {} or base {} not found",
-                    code.operand.borrow(),
-                    code.base.borrow()
-                );
+        if obj_code.len() > 0 {
+            if parser.program_start_address == 0x0 {
+                contents.push_str(&format!(
+                    "T^{:06X}^{:02X}^{:03X}{}\n",
+                    start_address,
+                    (obj_code.len() - count) / 2,
+                    relocation_bit,
+                    obj_code
+                ));
             } else {
-                print!("{}:\t{}\n-> ", code.line_number, code.code);
-                println!(
-                    "operand {} not found",
-                    code.operand.borrow(),
-                );
+                contents.push_str(&format!(
+                    "T^{:06X}^{:03X}^{}\n",
+                    start_address,
+                    (obj_code.len() - count) / 2,
+                    obj_code
+                ));
             }
-            have_error = true;
         }
 
-        if (code.nocode.get() && width > 0) || (obj_code.len()-count) + width >= 60 {
-            // println!("len: {}, width: {}", obj_code.len(), width);
-            if obj_code.len() > 0 {
-                if program_start == 0x0 {
-                    contents.push_str(&format!(
-                        "T^{:06X}^{:02X}^{:03X}^{}\n",
-                        start_address,
-                        (obj_code.len()-count)/2,
-                        relocation_bit,
-                        obj_code
-                    ));
-                } else {
-                    contents.push_str(&format!(
-                        "T^{:06X}^{:03X}^{}\n",
-                        start_address,
-                        (obj_code.len()-count)/2,
-                        obj_code
-                    ));
-                }
+        contents.push_str(&format!("E^{:06X}", parser.program_start_address));
+        if !have_error {
+            if let Err(e) = fs::write(&self.execute_file_path, contents){
+                return Err(e.to_string());
             }
-            now_bit = 4096;
-            relocation_bit = 0;
-            start_address = code.address.get();
-            obj_code = String::new();
-            count = 0;
         }
+        // END print binary code
 
-        // RESW RESB
-        if code.nocode.get() && width > 0 {
-            let mut now = i + 1;
-
-            while now < byte_code_list.len() {
-                let code = &byte_code_list[now];
-                if code.nocode.get() {
-                    now = now + 1;
-                } else {
-                    break;
-                }
-            }
-            if now < byte_code_list.len() {
-                start_address = (&byte_code_list[now]).address.get();
-            }
-            continue;
-        }
-
-        if !code.nocode.get() {
-            if code.byte.get() == 4 && !code.variable.get() && code.ni.get() != 1{
-                relocation_bit += now_bit;
-            }
-            count += 1;
-            obj_code.push_str(&format!("{:0width$X}^", code.obj_code.get(), width = width));
-            now_bit /= 2;
-        }
+        return Ok(());
     }
-
-    if obj_code.len() > 0 {
-        if parser.program_start_address == 0x0 {
-            contents.push_str(&format!(
-                "T^{:06X}^{:02X}^{:03X}{}\n",
-                start_address,
-                (obj_code.len()-count)/2,
-                relocation_bit,
-                obj_code
-            ));
-        } else {
-            contents.push_str(&format!(
-                "T^{:06X}^{:03X}^{}\n",
-                start_address,
-                (obj_code.len()-count)/2,
-                obj_code
-            ));
-        }
-    }
-
-    contents.push_str(&format!("E^{:06X}", parser.program_start_address));
-    if !have_error {
-        fs::write(&target.execute_file, contents)?;
-    }
-    // END print binary code
-
-    Ok(())
 }
