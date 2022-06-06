@@ -57,19 +57,6 @@ impl Target {
     }
 
     pub fn run(&self) -> Result<(), String> {
-        let code_file_path = Path::new(self.code_file_path.as_str());
-        let user_code: String;
-        let comma_regex = Regex::new(r"[ \t]*,[ \t]*").unwrap();
-        let c_re = Regex::new(r"[ \t]+C[ \t]*'").unwrap();
-        let x_re = Regex::new(r"[ \t]+X[ \t]*'").unwrap();
-
-        match fs::read_to_string(code_file_path) {
-            Ok(code) => user_code = code,
-            Err(_) => {
-                return Err(err::handler().e002());
-            }
-        }
-
         println!("
        _                      _   _       _   _       _
 __   _(_)_ __   ___ ___ _ __ | |_(_)_ __ | |_| |_ ___| |__
@@ -83,6 +70,18 @@ __   _(_)_ __   ___ ___ _ __ | |_(_)_ __ | |_| |_ ___| |__
 | (_| \\__ \\__ \\  __/ | | | | | |_) | |  __/ |
  \\__,_|___/___/\\___|_| |_| |_|_.__/|_|\\___|_|
     ");
+        let code_file_path = Path::new(self.code_file_path.as_str());
+        let user_code: String;
+        let comma_regex = Regex::new(r"[ \t]*,[ \t]*").unwrap();
+        let c_re = Regex::new(r"[ \t]+C[ \t]*'").unwrap();
+        let x_re = Regex::new(r"[ \t]+X[ \t]*'").unwrap();
+
+        match fs::read_to_string(code_file_path) {
+            Ok(code) => user_code = code,
+            Err(_) => {
+                return Err(err::handler().e002());
+            }
+        }
 
         let mut parser = Parser::new(self.verbose);
 
@@ -120,8 +119,8 @@ __   _(_)_ __   ___ ___ _ __ | |_(_)_ __ | |_| |_ ___| |__
                     for i in 0..need_modify_code.len() {
                         let code = &mut obj_code_list[address_map[&need_modify_code[i]]];
                         if let Err(e) = code.re_alloc(&mut parser) {
-                            log::println(
-                                &format!("{}:\t{}\n-> ", line_number, source_code),
+                            log::print(
+                                &format!("{:X}:{}:\t{}\n-> ",need_modify_code[i], line_number, source_code),
                                 !self.verbose,
                             );
                             log::println(&e, true);
@@ -133,9 +132,9 @@ __   _(_)_ __   ___ ___ _ __ | |_(_)_ __ | |_| |_ ___| |__
                     mem_loc += offset;
                 }
                 Err(e) => {
-                    if e == err::handler().e301() {
+                    if e == err::handler().e301() || e == err::handler().e306(){
                         io::stdout().flush().unwrap();
-                        return Err(e.into());
+                        return Err(e);
                     }
                     have_error = true;
                     log::print(
@@ -192,7 +191,7 @@ __   _(_)_ __   ___ ___ _ __ | |_(_)_ __ | |_| |_ ___| |__
             "H^{:>6}{:06X}{:06X}\n",
             program_name,
             start_address,
-            parser.program_length,
+            parser.program_length - start_address,
         );
 
         let mut now_bit = 4096;
@@ -206,14 +205,10 @@ __   _(_)_ __   ___ ___ _ __ | |_(_)_ __ | |_| |_ ___| |__
             if code.undone {
                 if code.base != "" {
                     print!("{}:\t{}\n-> ", code.line_number, code.source_code);
-                    println!(
-                        "operand {} or base {} not found",
-                        code.operand,
-                        code.base
-                    );
+                    log::println(&err::handler().e312(&code.operand, &code.base), true);
                 } else {
                     print!("{}:\t{}\n-> ", code.line_number, code.source_code);
-                    println!("operand {} not found", code.operand);
+                    log::println(&err::handler().e311(&code.operand), true);
                 }
                 have_error = true;
             }
@@ -294,7 +289,7 @@ __   _(_)_ __   ___ ___ _ __ | |_(_)_ __ | |_| |_ ___| |__
         contents.push_str(&format!("E^{:06X}", parser.program_start_address));
         if !have_error {
             if let Err(e) = fs::write(&self.execute_file_path, contents){
-                return Err(e.to_string());
+                return Err(err::handler().e003(&e.to_string()));
             }
         }
         // END print binary code

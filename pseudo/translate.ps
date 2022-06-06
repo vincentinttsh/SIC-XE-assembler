@@ -1,0 +1,77 @@
+translate (line_number, mem_loc, code) {
+    match format(code) {
+        1 => {
+            return code_translate(mem_loc, code[0], "") + ([])
+        }
+        2 => {
+            if code[1] is mnemonic {
+                need_modify = symbol_table.insert(code[0], mem_loc)
+                return code_translate(mem_loc, code[1], "") + (need_modify)
+            } else {
+                return code_translate(mem_loc, code[0], code[1]) + ([])
+            }
+        }
+        3 => {
+            need_modify = symbol_table.insert(code[0], mem_loc)
+            return code_translate(mem_loc, code[1], "") + (need_modify)
+        }
+    }
+}
+code_translate (mem_loc, mnemonic, operand) {
+    match mnemonic_format {
+        1 => {
+            return (format_1_obj_code, 1)
+        }
+        2 => {
+            if only contain one register => plus 0x0
+            return (format_2_obj_code, 2)
+        }
+        34 => {
+            xpbe = 0
+            if mnemonic.contains("+") {
+                extension = true
+                xbpe += 1;
+            } else {
+                extension = false
+            }
+
+            if operand.contains('@') {
+                ni = AddressingMode::Indirect
+            } else if operand.contains('#') {
+                ni = AddressingMode::Immediate
+            } else {
+                ni = AddressingMode::Simple
+            }
+
+            if operand.contains('X') {
+                xpbe += 8
+            }
+
+            if ni == AddressingMode::Immediate && is_digit(operand) {
+                return (format_4_obj_code, 4)
+            }
+
+            if operand can found {
+                if PC relative work {
+                xpbe += 4
+                } else {
+                    xpbe += 2
+                }
+                if extension {
+                    return (format_4_obj_code, 4)
+                } else {
+                    return (format_3_obj_code, 3)
+                }
+            } else {
+                // unknown field use 0x0
+
+                if extension {
+                    return (format_4_obj_code, 4)
+                } else {
+                    return (format_3_obj_code, 3)
+                }
+            }
+            
+        }
+    }
+}

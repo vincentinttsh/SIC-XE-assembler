@@ -157,7 +157,7 @@ enum AddressingMode {
     Simple = 0b11,
 }
 
-enum SizeLimit {
+pub enum SizeLimit {
     Location = 0xfffff, //2^20
 }
 
@@ -666,7 +666,7 @@ impl Parser {
                             }
                         }
 
-                        if tmp_obj_code.len() > 14 {
+                        if tmp_obj_code.len() > 16 {
                             return Err(err::handler().e208());
                         }
 
@@ -723,6 +723,10 @@ impl Parser {
                         ) {
                             Ok((ni, obj_code, finial_operand, undone, byte)) => {
                                 offset = byte as u32;
+                                if finial_operand == label {
+                                    self.symbol_table.remove_waiting(&finial_operand, location);
+                                    return Err(err::handler().e313());
+                                }
                                 code = Code::new(
                                     line_number,
                                     source_code,
@@ -743,22 +747,34 @@ impl Parser {
                         }
                     }
                 }
-
                 if let Err(e) = self.symbol_legal(label) {
+                    self.symbol_table.remove_waiting(&code.operand, location);
                     return Err(format!("label invalid: {}", e));
                 }
-
-                match self.symbol_table.insert(label, location) {
-                    Ok(waiting_list) => {
-                        need_modify_code = waiting_list;
+                if mnemonic == "START" {
+                    match self.symbol_table.insert(label, offset) {
+                        Ok(waiting_list) => {
+                            need_modify_code = waiting_list;
+                        }
+                        Err(e) => {
+                            self.symbol_table.remove_waiting(&code.operand, offset);
+                            return Err(e);
+                        }
                     }
-                    Err(e) => {
-                        return Err(e);
+                } else {
+                    match self.symbol_table.insert(label, location) {
+                        Ok(waiting_list) => {
+                            need_modify_code = waiting_list;
+                        }
+                        Err(e) => {
+                            self.symbol_table.remove_waiting(&code.operand, location);
+                            return Err(e);
+                        }
                     }
                 }
             }
             _ => {
-                return Err(err::handler().e000());
+                return Err(err::handler().e310());
             }
         }
 
@@ -926,12 +942,6 @@ impl Parser {
                     }
 
                     finial_operand = String::from(operand[0]);
-                    if extension {
-                        xbpe += 1;
-                        byte = 4;
-                    } else {
-                        byte = 3;
-                    }
 
                     let mut num: i32 = -1;
                     let mut is_digit = false;
@@ -944,9 +954,18 @@ impl Parser {
 
                     if ni == AddressingMode::Immediate as u8 && is_digit {
                         let operand = num;
-                        obj_code = self.fill_obj_code(opcode, ni, xbpe, operand, extension);
+                        xbpe += 1;
+                        byte = 4;
+                        obj_code = self.fill_obj_code(opcode, ni, xbpe, operand, true);
                         undone = false;
                     } else {
+                        if extension {
+                            xbpe += 1;
+                            byte = 4;
+                        } else {
+                            byte = 3;
+                        }
+
                         if let Err(e) = self.symbol_legal(operand[0]) {
                             return Err(format!("operand invalid: {}", e));
                         }
@@ -968,6 +987,7 @@ impl Parser {
                                     pc = new_length as i32;
                                 }
                                 None => {
+                                    self.symbol_table.remove_waiting(operand[0], location);
                                     return Err(err::handler().e306());
                                 }
                             }

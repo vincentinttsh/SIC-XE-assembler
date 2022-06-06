@@ -4,7 +4,6 @@ pub struct EN;
 pub struct ZH;
 
 pub trait ErrMsg {
-    fn e000(&self) -> String;
     fn e001(&self) -> String;
     fn e002(&self) -> String;
     fn e003(&self, msg: &str) -> String;
@@ -36,18 +35,19 @@ pub trait ErrMsg {
     fn e307(&self) -> String;
     fn e308(&self, base: &str) -> String;
     fn e309(&self) -> String;
+    fn e310(&self) -> String;
+    fn e311(&self, operand: &str) -> String;
+    fn e312(&self, operand: &str, base: &str) -> String;
+    fn e313(&self) -> String;
     fn e999(&self, msg: &str) -> String;
 }
 
 impl ErrMsg for EN {
-    fn e000(&self) -> String {
-        return format!("E[000]: Invalid source code");
-    }
     fn e001(&self) -> String {
         return format!("E[001]: Invalid file name");
     }
     fn e002(&self) -> String {
-        return format!("E[002]: Can;t open file");
+        return format!("E[002]: Can't open file");
     }
     fn e003(&self, msg: &str) -> String {
         return format!("E[003]: Can not write file: {}", msg);
@@ -75,19 +75,19 @@ impl ErrMsg for EN {
     }
     fn e203(&self, location: &str) -> String {
         return format!(
-            "E[203]: illegal Start address：{} must be positive 16 bit Hex",
+            "E[203]: Illegal Start address：{} must be positive 16 bit Hex",
             location
         );
     }
     fn e204(&self) -> String {
         return format!(
             "E[204]: {}, {}",
-            "illegal size: must be positive decimal",
+            "Illegal size: must be positive decimal",
             "and small then 1048576 (word size is 3 bytes)"
         );
     }
     fn e205(&self) -> String {
-        return format!("E[205]: illegal size: must be decimal, and the range is -2048 to 2047");
+        return format!("E[205]: Illegal number: must be decimal, and the range is -2048 to 2047");
     }
     fn e206(&self) -> String {
         // cspell:disable
@@ -98,7 +98,7 @@ impl ErrMsg for EN {
         return format!("E[207]: BYTE only support ASCII character");
     }
     fn e208(&self) -> String {
-        return format!("E[208]: BYTE only support 7 character");
+        return format!("E[208]: BYTE only support 8 character");
     }
     fn e209(&self) -> String {
         return format!("E[209]: BYTE X mode need whole hex, EX: F => 0F");
@@ -113,10 +113,10 @@ impl ErrMsg for EN {
         return format!("E[212]: register {} is not exist", register);
     }
     fn e213(&self) -> String {
-        return format!("E[213]: illegal operand format: format is [register] or [register, register]");
+        return format!("E[213]: Illegal operand format: format is [register] or [register, register]");
     }
     fn e214(&self) -> String {
-        return format!("E[214]: illegal operand format: format is [symbol] or [symbol, X]");
+        return format!("E[214]: Illegal operand format: format is [symbol] or [symbol, X]");
     }
     fn e301(&self) -> String {
         return format!("E[301]: code need to start with a legal START mnemonic");
@@ -140,7 +140,7 @@ impl ErrMsg for EN {
         return format!("E[306]: SIC/XE program is too large, maximum size is 1048576(2^20) bytes");
     }
     fn e307(&self) -> String {
-        return format!("E[307]: Need to use BASE, but you haven'y defined it");
+        return format!("E[307]: Need to use BASE, but you haven't defined it");
     }
     fn e308(&self, base: &str) -> String {
         return format!("E[308]: Use BASE {} also out of range", base);
@@ -148,15 +148,24 @@ impl ErrMsg for EN {
     fn e309(&self) -> String {
         return format!("E[309]: Start at unknown location");
     }
+    fn e310(&self) -> String {
+        return format!("E[310]: Invalid source code");
+    }
+    fn e311(&self, operand: &str) -> String {
+        return format!("E[311]: Operand {} not found", operand);
+    }
+    fn e312(&self, operand: &str, base: &str) -> String {
+        return format!("E[312]: Operand {} or base {} not found", operand, base);
+    }
+    fn e313(&self) -> String {
+        return format!("E[313]: Operand and label can not be same");
+    }
     fn e999(&self, msg: &str) -> String {
-        return format!("E[999]: {}, please report it", msg);
+        return format!("E[999]: Assembler have bug: {}, please report it", msg);
     }
 }
 
 impl ErrMsg for ZH {
-    fn e000(&self) -> String {
-        return format!("E[000]: 不合法的原始碼");
-    }
     fn e001(&self) -> String {
         return format!("E[001]: 不合法的檔案名稱");
     }
@@ -197,7 +206,7 @@ impl ErrMsg for ZH {
         return format!("E[204]: 不合法的大小：必須是正整數，並且小於 1048576 (word 是 3 位元組)");
     }
     fn e205(&self) -> String {
-        return format!("E[205]: 不合法的大小：必須是整數，並且範圍是 -2048 到 2047");
+        return format!("E[205]: 不合法的數字：必須是整數，並且範圍是 -2048 到 2047");
     }
     fn e206(&self) -> String {
         // cspell:disable
@@ -208,7 +217,7 @@ impl ErrMsg for ZH {
         return format!("E[207]: BYTE 只支援 ASCII 字元");
     }
     fn e208(&self) -> String {
-        return format!("E[208]: BYTE 只支援 7 個字元");
+        return format!("E[208]: BYTE 只支援 8 個字元");
     }
     fn e209(&self) -> String {
         return format!("E[209]: BYTE X 模式需要整個十六進位，EX: F => 0F");
@@ -257,6 +266,18 @@ impl ErrMsg for ZH {
     }
     fn e309(&self) -> String {
         return format!("E[309]: 程式起始位址未知");
+    }
+    fn e310(&self) -> String {
+        return format!("E[310]: 不合法的原始碼");
+    }
+    fn e311(&self, operand: &str) -> String {
+        return format!("E[311]: 操作元 {} 未定義", operand);
+    }
+    fn e312(&self, operand: &str, base: &str) -> String {
+        return format!("E[312]: 操作元 {} 或 BASE {} 未定義", operand, base);
+    }
+    fn e313(&self) -> String {
+        return format!("E[313]: 操作元跟符號不能一樣");
     }
     fn e999(&self, msg: &str) -> String {
         return format!("E[999]: {}, 請幫忙回報", msg);

@@ -23,6 +23,11 @@ impl SymbolTable {
         }
     }
 
+    pub fn remove_waiting(&mut self, symbol: &str, location: u32) {
+        let data = self.table.get_mut(symbol).unwrap();
+        data.waiting_list.retain(|&x| x != location);
+    }
+
     pub fn is_legal(&self, symbol: &str) -> bool {
         return self.legal_symbol_regex.is_match(symbol);
     }
@@ -82,7 +87,7 @@ impl SymbolTable {
 
     pub fn inter(&self) {
         self.table.iter().for_each(|(k, v)| {
-            println!("{} -> {:04X}", k, v.location);
+            println!("{} -> {:04X} : {:?}", k, v.location, v.waiting_list);
         });
     }
 

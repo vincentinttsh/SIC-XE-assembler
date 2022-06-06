@@ -1,0 +1,117 @@
+print_binary_code() {
+    Select parser.get_symbol_location(program_name.as_str()) {
+        Some((s, need_alloc)) => {
+            if need_alloc {
+                e309()
+            }
+            start_address ← s;
+            program_start ← s;
+        }
+        None => {
+            e309()
+        }
+    }
+    contents ← format!(
+        "H^{:>6}{:06X}{:06X}\n",
+        program_name,
+        start_address,
+        parser.program_length - start_address,
+    );
+
+    now_bit ← 4096;
+    relocation_bit: u16 ← 0;
+    obj_code ← ""
+    count ← 0;
+
+    for i in 0..Len(obj_code_list) {
+        code ← obj_code_list[i];
+        width ← (code.byte * 2);
+        if code.undone {
+            if code.base != "" {
+                e312()
+            } else {
+                e311()
+            }
+            have_error = true;
+        }
+
+        if (code.no_obj_code && width > 0) || (obj_code.len() - count) + width >= 60 {
+            if obj_code.len() > 0 {
+                if program_start == 0x0 {
+                    contents.push_str(&format!(
+                        "T^{:06X}^{:02X}^{:03X}^{}\n",
+                        start_address,
+                        (obj_code.len() - count) / 2,
+                        relocation_bit,
+                        obj_code
+                    ));
+                } else {
+                    contents.push_str(&format!(
+                        "T^{:06X}^{:03X}^{}\n",
+                        start_address,
+                        (obj_code.len() - count) / 2,
+                        obj_code
+                    ));
+                }
+            }
+            now_bit = 4096;
+            relocation_bit = 0;
+            start_address = code.location;
+            obj_code = String::new();
+            count = 0;
+        }
+
+        // RESW RESB
+        if code.no_obj_code && width > 0 {
+            let mut now = i + 1;
+
+            while now < obj_code_list.len() {
+                let code = &obj_code_list[now];
+                if code.no_obj_code {
+                    now = now + 1;
+                } else {
+                    break;
+                }
+            }
+            if now < obj_code_list.len() {
+                start_address = (&obj_code_list[now]).location;
+            }
+            continue;
+        }
+
+        if !code.no_obj_code {
+            if code.byte == 4 && !code.variable && code.ni != 1 {
+                relocation_bit += now_bit;
+            }
+            count += 1;
+            obj_code.push_str(&format!("{:0width$X}^", code.obj_code, width = width));
+            now_bit /= 2;
+        }
+    }
+
+    if obj_code.len() > 0 {
+        if parser.program_start_address == 0x0 {
+            contents.push_str(&format!(
+                "T^{:06X}^{:02X}^{:03X}{}\n",
+                start_address,
+                (obj_code.len() - count) / 2,
+                relocation_bit,
+                obj_code
+            ));
+        } else {
+            contents.push_str(&format!(
+                "T^{:06X}^{:03X}^{}\n",
+                start_address,
+                (obj_code.len() - count) / 2,
+                obj_code
+            ));
+        }
+    }
+
+    contents.push_str(&format!("E^{:06X}", parser.program_start_address));
+    if !have_error {
+        if let Err(e) = fs::write(&self.execute_file_path, contents){
+            return Err(err::handler().e003(&e.to_string()));
+        }
+    }
+}
