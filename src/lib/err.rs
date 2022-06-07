@@ -65,7 +65,7 @@ impl ErrMsg for EN {
         return format!("E[104]: symbol {} is a register", symbol);
     }
     fn e105(&self, symbol: &str) -> String {
-        return format!("E[105]: symbol {} is a reserve word", symbol);
+        return format!("E[105]: symbol {} is a reserved word", symbol);
     }
     fn e201(&self, mnemonic: &str) -> String {
         return format!("E[201]: unknown mnemonic: {}", mnemonic);
@@ -119,7 +119,7 @@ impl ErrMsg for EN {
         return format!("E[214]: Illegal operand format: format is [symbol] or [symbol, X]");
     }
     fn e301(&self) -> String {
-        return format!("E[301]: code need to start with a legal START mnemonic");
+        return format!("E[301]: code need to start with a legal START");
     }
     fn e302(&self) -> String {
         return format!("E[302]: BASE must be after LDB");
@@ -146,7 +146,7 @@ impl ErrMsg for EN {
         return format!("E[308]: Use BASE {} also out of range", base);
     }
     fn e309(&self) -> String {
-        return format!("E[309]: Start at unknown location");
+        return format!("E[309]: Execute at unknown location");
     }
     fn e310(&self) -> String {
         return format!("E[310]: Invalid source code");
@@ -265,7 +265,7 @@ impl ErrMsg for ZH {
         return format!("E[308]: 使用 BASE {} 依然超過範圍", base);
     }
     fn e309(&self) -> String {
-        return format!("E[309]: 程式起始位址未知");
+        return format!("E[309]: 程式執行位址未知");
     }
     fn e310(&self) -> String {
         return format!("E[310]: 不合法的原始碼");

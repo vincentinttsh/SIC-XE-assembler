@@ -174,7 +174,7 @@ __   _(_)_ __   ___ ___ _ __ | |_(_)_ __ | |_| |_ ___| |__
         // print binary code
         let mut start_address: u32;
         let program_start: u32;
-        let program_name = parser.program_name.clone();
+        let mut program_name = parser.program_name.clone();
         match parser.get_symbol_location(program_name.as_str()) {
             Some((s, need_alloc)) => {
                 if need_alloc {
@@ -187,15 +187,17 @@ __   _(_)_ __   ___ ___ _ __ | |_(_)_ __ | |_| |_ ___| |__
                 return Err(err::handler().e309());
             }
         }
+        while program_name.len() < 6 {
+            program_name.push(' ');
+        }
         let mut contents = format!(
-            "H^{:>6}{:06X}{:06X}\n",
+            "H^{}{:06X}{:06X}\n",
             program_name,
             start_address,
             parser.program_length - start_address,
         );
 
-        let mut now_bit = 4096;
-        let mut relocation_bit: u16 = 0;
+        let mut m_record = String::new();
         let mut obj_code = String::new();
         let mut count = 0;
 
@@ -215,25 +217,13 @@ __   _(_)_ __   ___ ___ _ __ | |_(_)_ __ | |_| |_ ___| |__
 
             if (code.no_obj_code && width > 0) || (obj_code.len() - count) + width >= 60 {
                 if obj_code.len() > 0 {
-                    if program_start == 0x0 {
-                        contents.push_str(&format!(
-                            "T^{:06X}^{:02X}^{:03X}^{}\n",
-                            start_address,
-                            (obj_code.len() - count) / 2,
-                            relocation_bit,
-                            obj_code
-                        ));
-                    } else {
-                        contents.push_str(&format!(
-                            "T^{:06X}^{:03X}^{}\n",
-                            start_address,
-                            (obj_code.len() - count) / 2,
-                            obj_code
-                        ));
-                    }
+                    contents.push_str(&format!(
+                        "T^{:06X}^{:02X}^{}\n",
+                        start_address,
+                        (obj_code.len() - count) / 2,
+                        obj_code
+                    ));
                 }
-                now_bit = 4096;
-                relocation_bit = 0;
                 start_address = code.location;
                 obj_code = String::new();
                 count = 0;
@@ -259,33 +249,37 @@ __   _(_)_ __   ___ ___ _ __ | |_(_)_ __ | |_| |_ ___| |__
 
             if !code.no_obj_code {
                 if code.byte == 4 && !code.variable && code.ni != 1 {
-                    relocation_bit += now_bit;
+                    if code.xbpe() % 2 == 1 {
+                        m_record.push_str(&format!(
+                            "M^{:06X}^{:02}\n",
+                            code.location+1,
+                            5
+                        ));
+                    } else {
+                        m_record.push_str(&format!(
+                            "M^{:06X}^{:02}\n",
+                            code.location+1,
+                            3
+                        ));
+                    }
                 }
                 count += 1;
                 obj_code.push_str(&format!("{:0width$X}^", code.obj_code, width = width));
-                now_bit /= 2;
             }
         }
 
         if obj_code.len() > 0 {
-            if parser.program_start_address == 0x0 {
-                contents.push_str(&format!(
-                    "T^{:06X}^{:02X}^{:03X}{}\n",
-                    start_address,
-                    (obj_code.len() - count) / 2,
-                    relocation_bit,
-                    obj_code
-                ));
-            } else {
-                contents.push_str(&format!(
-                    "T^{:06X}^{:03X}^{}\n",
-                    start_address,
-                    (obj_code.len() - count) / 2,
-                    obj_code
-                ));
-            }
+            contents.push_str(&format!(
+                "T^{:06X}^{:03X}^{}\n",
+                start_address,
+                (obj_code.len() - count) / 2,
+                obj_code
+            ));
         }
 
+        if program_start == 0x0 {
+            contents.push_str(&m_record);
+        }
         contents.push_str(&format!("E^{:06X}", parser.program_start_address));
         if !have_error {
             if let Err(e) = fs::write(&self.execute_file_path, contents){

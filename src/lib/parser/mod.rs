@@ -139,7 +139,7 @@ impl Code {
         return Ok(());
     }
 
-    fn xbpe(&self) -> u8 {
+    pub fn xbpe(&self) -> u8 {
         if self.byte <= 2 {
             return 0;
         }
@@ -952,20 +952,18 @@ impl Parser {
                         }
                     }
 
-                    if ni == AddressingMode::Immediate as u8 && is_digit {
-                        let operand = num;
+                    if extension {
                         xbpe += 1;
                         byte = 4;
-                        obj_code = self.fill_obj_code(opcode, ni, xbpe, operand, true);
+                    } else {
+                        byte = 3;
+                    }
+
+                    if ni == AddressingMode::Immediate as u8 && is_digit {
+                        let operand = num;
+                        obj_code = self.fill_obj_code(opcode, ni, xbpe, operand, extension);
                         undone = false;
                     } else {
-                        if extension {
-                            xbpe += 1;
-                            byte = 4;
-                        } else {
-                            byte = 3;
-                        }
-
                         if let Err(e) = self.symbol_legal(operand[0]) {
                             return Err(format!("operand invalid: {}", e));
                         }

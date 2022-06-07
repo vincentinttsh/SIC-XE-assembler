@@ -1,4 +1,3 @@
-. cspell:disable
 . comment
   . indexed addressing
 .. free format coding
